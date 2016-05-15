@@ -61,7 +61,104 @@ declare -gA deplComps
 declare -gA compDefs
 
 ###########################################################################
-# structure utils
+# component API
+###########################################################################
+
+SCRIPT_CREATE_EXPORTS=scripts/create_exports
+SCRIPT_CREATE_MANIFEST=scripts/create_manifest
+
+# $1: name
+# $2: ctx
+SCRIPT_create_exports()
+{
+  local s="$(get_script "$1" $SCRIPT_CREATE_EXPORTS)"
+  if [ -n "$s"  ]; then
+    "$s" "$2" 
+  else
+    s="$(get_script "$1" $SCRIPT_CREATE_MANIFEST)"
+    if [ -n "$s"  ]; then
+      "$s" "$2"
+    else
+      cat "$2"
+    fi | yaml2json | jq .exports | spiff merge -
+  fi
+}
+
+# $1: name
+# $2: ctx
+SCRIPT_create_manifest()
+{
+  local s="$(get_script "$1" $SCRIPT_CREATE_MANIFEST)"
+  if [ -n "$s"  ]; then
+    "$s" "$2"
+  else
+    cat "$2"
+  fi
+}
+
+###########################################################################
+# access
+###########################################################################
+
+get_deployment()
+{
+  echo "${deplDefs[$1]}"
+}
+
+get_deployment_component()
+{
+  local c="${deplComps[$1]}"
+  if [ -n "$c" ]; then
+    echo "${compDefs[$c]}"
+  else
+    Error "no component for $1"
+  fi
+}
+
+require_deployment()
+{
+  local n="${1:-$DNAME}"
+  if [ -z "$n" ]; then
+    Error "${ERRCTX}${ERRCTX:+: }deployment name missing"
+  fi
+  local t="$(get_deployment "$n")"
+  if [ -z "$t" ]; then
+    Error "${ERRCTX}${ERRCTX:+: }deployment $n not found"
+  else
+    echo "$t"
+  fi
+}
+
+check_deployment()
+{
+  local t="$(get_deployment "$1")"
+  if [ -z "$t" ]; then
+    return 1
+  fi
+}
+
+get_imports()
+{
+  _get_array "$1" "$2" deplReqs
+}
+
+get_stubs()
+{
+  _get_array "$1" "$2" deplStubs
+}
+
+# $1: name
+# $2: script
+get_script()
+{
+  local d="$(get_deployment "$1")"
+  local c="$(get_deployment_component "$1")"
+
+  _filter_file "$d/$2" -e || _filter_file "$c/$2" || true
+}
+
+###########################################################################
+# model
 ###########################################################################
 DIR_DEPLOYMENTS=deployments
 DIR_MODULES=modules
@@ -76,6 +173,7 @@ SCRIPT_EXPORTS=scripts/create_manifest
 GEN_EXP=exp.yml
 GEN_IMP=imp.yml
 GEN_CTX=ctx.yml
+GEN_MANIFEST=manifest.yml
 
 
 norm_path()
@@ -121,9 +219,12 @@ _check_files()
   return 0
 }
 
+# $1: file
+# $2: check
 _filter_file()
 {
-  if [ -f "$1" ]; then
+  local f="${2:--f}"
+  if [ $f "$1" ]; then
     echo "$1"
     return 0
   else
@@ -248,7 +349,7 @@ _scanDeployments()
     fi
   else
     for i in "$1"/*; do
-      if [ -d "$i" ]; then
+      if [ -d "$i"  -a "$(basename "$i")" != gen ]; then
         _scanDeployments $p "$i" "$2${2:+/}$(basename "$i")" "$3"
       fi
     done
@@ -335,11 +436,15 @@ setupDeployment()
     log warn " component $comp for deployment $1 not defined"
   fi
 
+  debug "analyse imports"
   local res
   _get_yaml_list '.requires[]' <<<"$def"
-  _set_array "$1" deplReqs"${res[@]}"
   debug " requires ${res[@]}"
+  _set_array "$1" deplReqs "${res[@]}"
+
+  debug "analyse context"
   _get_yaml_list '.context[]' <<<"$def"
+  debug " context ${res[@]}"
   _set_array "$1" deplCtxs "${res[@]}"
 
   local c
@@ -437,4 +542,179 @@ cacheAll()
     debug "* setup $d"
     setupDeployment "$d"
   done
+}
+
+###########################################################################
+# generate
+###########################################################################
+
+_map_name()
+{
+  tr '/' '_' <<<"$1"
+}
+
+# $1: name
+# $2: gen dir
+_generate()
+{
+  local i
+  local a
+  local t
+  local imps=( )
+
+  t="$(require_deployment "$1")"
+
+  mkdir -p "$2/$1"
+  {
+    echo "import:"
+    get_imports imps "$1"
+    for i in "${imps[@]}"; do
+      if [ -f "$2/$i/$GEN_EXP" ]; then
+        echo "  $(_map_name "$i"): $(yaml2json <"$2/$i/$GEN_EXP")"
+        title "  imp $i: $(yaml2json <"$2/$i/$GEN_EXP")"
+      else
+        warn "  no import for $i"
+      fi
+    done 
+  } >"$2/$1/$GEN_IMP"
+
+  #confirm "$(cat "$2/$1/$GEN_IMP")"
+
+  local stubs=( )
+  get_stubs stubs "$1"
+
+  local ctx=$2/$1/$GEN_CTX
+  if [ -n "${opts[spiff]+x}" ]; then
+    info spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" 
+  fi
+  spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" >"$ctx"
+  SCRIPT_create_exports "$1" "$ctx" >"$2/$1/$GEN_EXP"
+  confirm "  exp: $(cat "$2/$1/$GEN_EXP")"
+}
+
+# $1: array name
+# $2; name
+_closure()
+{
+  local _queue=( "$2" )
+  local _closure=( )
+  local _imps=( )
+  local n
+  local i
+
+   declare -A _required
+  __missing=( )
+
+  while [ ${#_queue[@]} -gt 0 ]; do
+    n="${_queue[0]}"
+    _queue=( "${_queue[@]:1}" )
+    _imps=( )
+    if ! check_deployment "$n"; then
+      __missing+=( "missing '$n' ${_required[$n]}" )
+      debug "missing $n"
+    else
+      get_imports _imps "$n"
+      debug "processing $n: ${_imps[@]}"
+      for i in "${_imps[@]}"; do
+        if ! contains "$i" "${_closure[@]}" "${_queue[@]}"; then
+          _closure+=( "$i" )
+          _queue+=( "$i" )
+          _required["$i"]="required by '$n' ${_required[$n]}"
+        fi
+      done
+    fi
+  done
+  eval "$1=( \"\${_closure[@]}\" )"
+  return ${#__missing[@]}
+}
+
+# $1; name
+closure()
+{
+  local __closure=( )
+  _closure __closure "$1"
+  dumpargs "${__closure[@]}"
+}
+
+# $1; name
+has_cycle()
+{
+  local queue=$1
+  local closure
+  local n
+  local i
+
+  if contains $@; then
+    return 0
+  else
+    local imps=( )
+    get_imports imps "$1"
+    for i in "${imps[@]}"; do
+      if has_cycle $i $@; then
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+# $1: tmp
+# $2+: list
+_generate_list()
+{
+  local old
+  local new
+  local i
+
+  mod=
+  for i in ${@:2}; do
+    info "generate $i"
+    if [ -f "$1/$i/$GEN_EXP" ]; then
+      old="$(cat "$1/$i/$GEN_EXP")"
+      _generate $i "$1"
+      if [ "$old" != "$(cat "$1/$i/$GEN_EXP")" ]; then
+        info "$i has changed"
+        mod=X
+      fi
+    else
+      _generate $i "$1"
+    fi
+  done
+}
+
+declare -A temp
+
+# $1: name
+# $2; dir
+generate_exports()
+{
+  local imps=( )
+  if ! _closure imps "$1"; then
+    list_array __missing dumpargs_err
+    return 1
+  fi
+  info "target $1: ${imps[@]}"
+  if ! contains $1 "${imps[@]}"; then
+    imps+=( "$1" )
+  fi
+  _generate_list "$2" "${imps[@]}"
+  if has_cycle "$1"; then
+    info "cycle detected"
+    local mod=X
+    while [ -n "$mod" ]; do
+      info "regenerate"
+      _generate_list "$2" "${imps[@]}"
+    done
+  fi
+  local gen="$LROOT/$DIR_DEPLOYMENTS/$1/gen"
+  mkdir -p "$gen"
+  mv "$2/$1"/* "$gen"
+}
+
+generate_manifest()
+{
+  generate_exports "$@"
+  info generating manifest
+  local gen="$LROOT/$DIR_DEPLOYMENTS/$1/gen"
+  SCRIPT_create_manifest "$1" "$gen/$GEN_CTX" > "$gen/$GEN_MANIFEST"
 }

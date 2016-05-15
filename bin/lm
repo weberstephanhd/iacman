@@ -202,6 +202,69 @@ CMD_show()
   fi
 }
 
+########################
+# show dependency closure
+
+CMD_closure()
+{
+  setupEnv
+  cacheAll
+
+  local t
+  local n="${1:-$DNAME}"
+  if [ -z "$n" ]; then
+    Error "${ERRCTX}${ERRCTX:+: }deployment name missing"
+  fi
+  t="$(require_deployment "$1")"
+  info "generating dependency closure for $n"
+
+  local a=( )
+  if ! _closure a "$n"; then
+    list_array __missing dump_err
+    return 1
+  else
+    list_array a
+  fi
+}
+
+########################
+# generate exports
+
+CMD_exports()
+{
+  setupEnv
+  cacheAll
+
+  local t
+  local n="${1:-$DNAME}"
+  if [ -z "$n" ]; then
+    Error "${ERRCTX}${ERRCTX:+: }deployment name missing"
+  fi
+  t="$(require_deployment "$1")"
+  mkdir -p "$TMP"
+  info "generating exports for $n"
+  generate_exports "$1" "$TMP"
+}
+
+########################
+# generate manifest
+
+CMD_manifest()
+{
+  setupEnv
+  cacheAll
+
+  local t
+  local n="${1:-$DNAME}"
+  if [ -z "$n" ]; then
+    Error "${ERRCTX}${ERRCTX:+: }deployment name missing"
+  fi
+  t="$(require_deployment "$1")"
+  mkdir -p "$TMP"
+  info "generating manifest for $n"
+  generate_manifest "$1" "$TMP"
+}
+
 ###########################################################################
 # link evaluation
 ###########################################################################
@@ -249,7 +312,7 @@ if [ ${opts[debug]+set} ]; then
 fi
 
 
-CMDS=( ls show )
+CMDS=( ls show closure exports manifest )
 cmd="$(resolve_shortcut "$cmd" "${CMDS[@]}")"
 
 execute_command "$cmd" CMD_ "${CMDS[*]}" "$@"
