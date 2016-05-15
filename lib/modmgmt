@@ -1,0 +1,82 @@
+
+########################################################################
+# module management
+########################################################################
+
+set -e
+
+TOOLSET_LIB=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
+
+declare -g -A MODULES
+
+# preliminary def, will be replaced in toolset
+Error()
+{
+  echo "$@" 2>&1
+  exit 1
+}
+
+###################
+# lookup a module
+# may be replaced by a module to improve lookup
+#
+# $1: module name
+###################
+lookup_module()
+{
+  _lookup_module "$1"
+}
+
+__lookup_module()
+{
+  echo
+}
+
+_lookup_module()
+{
+  local p
+  if [ -n "$TOOSET_MODULE_PATH" ]; then
+    for e in $(sed -e "s/:/ /g" <<<"$TOOSET_MODULE_PATH"); do
+      if [ -f "$e/$1"; then
+        p="$e/$1"
+        break
+      fi
+    done
+  fi
+  if [ -z "$p" ]; then
+    if [ -f "$TOOLSET_LIB/$1" ]; then
+      p="$TOOLSET_LIB/$1"
+    else 
+      p="$(__lookup_module "$1")"
+    fi
+  fi
+  if [ -z "$p" ]; then
+    Error "module $1 not found"
+  fi
+  echo $p
+}
+
+###################
+# Load a toolset module
+# $1: name
+# [$2]: path
+###################
+loadModule()
+{
+  if [ -z "$1" ]; then
+    Error "module name missing"
+  fi
+  local p="$2"
+  if [ ! ${MODULES[$1]+x} ]; then
+    if [ -z "$p" ]; then
+      p="$(lookup_module "$1")"
+    fi 
+    if [ -f "$p" ]; then
+      MODULES[$1]="$p"
+      
+      source $p
+    else
+      Error "module $1($p) not found"
+    fi
+  fi
+}

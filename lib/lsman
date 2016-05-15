@@ -1,0 +1,440 @@
+
+###########################################################################
+###########################################################################
+# boshman main module
+###########################################################################
+###########################################################################
+
+TOOLSET_LIB=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
+source "$TOOLSET_LIB/modmgmt"
+
+set -o pipefail
+
+loadModule stdio
+loadModule utils
+loadModule data
+loadModule opts
+
+
+###########################################################################
+# utils
+###########################################################################
+
+QUIET=
+TMP=/tmp/lsman$$
+trap cleanup 2 ERR EXIT
+
+cleanup()
+{
+  #info "cleanup $TMP"
+  rm -Rf $TMP
+}
+
+################
+# optional execution of log command
+# $*: command
+log()
+{
+  if [ -z "$QUIET" ]; then
+    "$@"
+  fi
+}
+
+check_opts()
+{
+  local o
+  for o; do
+    if [ ${opts[$o]+set} ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+###########################################################################
+# landscape data
+###########################################################################
+declare -gA modDefs
+declare -gA deplDefs
+declare -gA deplComps
+
+declare -gA compDefs
+
+###########################################################################
+# structure utils
+###########################################################################
+DIR_DEPLOYMENTS=deployments
+DIR_MODULES=modules
+DIR_COMPONENTS=components
+DIR_CONFIG=config
+
+FILE_DEPLOYMENT=deployment.yml
+
+SCRIPT_MANIFEST=scripts/create_manifest
+SCRIPT_EXPORTS=scripts/create_manifest
+
+GEN_EXP=exp.yml
+GEN_IMP=imp.yml
+GEN_CTX=ctx.yml
+
+
+norm_path()
+{
+  local i
+  for i; do
+    i="${i##$LROOT}"
+    echo "${i:-/}"
+  done
+}
+
+contains_dir()
+{
+  local d="$1"
+  local i
+  shift
+  for i; do
+    if [ -d "$d/$i" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+_get_path()
+{
+  local p=""
+  local i
+  for i in "${@}"; do
+    p="$i/$p"
+  done
+  echo "${p%%/}"
+}
+
+_check_files()
+{
+  local i
+  for i in "${@}"; do
+    if [ ! -f "$i" -a ! -h "$i" ]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+_filter_file()
+{
+  if [ -f "$1" ]; then
+    echo "$1"
+    return 0
+  else
+    return 1
+  fi
+}
+
+# $1: depl name
+# $2: name
+lookupStub()
+{
+  local c="${deplComps[$1]}"
+  if [ -n "$c" ]; then
+     local d="${compDefs[$c]}"
+     if [ -n "$d" ]; then
+       _filter_file "$d/templates/$2" || _filter_file "$d/$2" || true
+     fi
+  fi
+
+  local d="${deplDefs[$1]}"
+  if [ -n "$d" -a -d "$d" ]; then
+    local t="$(dirname "$1")"
+    while [ "$t" != . ]; do
+      d="$(dirname "$d")"
+      t="$(dirname "$t")"
+    done
+    while [ "$d" != "$LROOT" ]; do
+      d="$(dirname "$(dirname "$d")")"
+      debug "lookup in $(norm_path "$d")"
+      _filter_file "$d/$DIR_DEPLOYMENTS/$1/$2" || true
+      _filter_file "$d/$DIR_CONFIG/$2" || true
+    done
+  fi
+}
+
+scan()
+{
+  _scanModule "$@"
+}
+
+_scanConfigs()
+{
+  local p
+  local i
+  if [ "$1" == -p ]; then
+    p=$1
+    shift
+  fi
+  debug "scanning dir $(norm_path "$1") ($2)"...
+
+  for i in "$1"/*; do
+    if [ -d "$i" ]; then
+      _scanComponents $p "$i" "$2${2:+/}$(basename "$i")" "$3"
+    else
+      found "$3  config $2${2:+/}$(basename "$i")"
+    fi
+  done
+}
+
+_scanComponents()
+{
+  local p
+  local i
+  if [ "$1" == -p ]; then
+    p=$1
+    shift
+  fi
+  debug "scanning dir $(norm_path "$1") ($2)"...
+  if [ -n "$2" ] && _check_files "$1/"*.yml; then
+    if [ ${compDefs[$2]+set} ]; then
+      log warn " ignoring duplicate component $2 at $(norm_path "$1")"
+    else
+      debug " found component $2 at $(norm_path "$1")"
+      compDefs["$2"]="$1"
+      if [ -n "$p" ]; then
+        found "$3  component $2"
+      fi
+    fi
+  else
+    for i in "$1"/*; do
+      if [ -d "$i" ]; then
+        _scanComponents $p "$i" "$2${2:+/}$(basename "$i")" "$3"
+      fi
+    done
+  fi
+}
+
+_scanDeployments()
+{
+  local p
+  local i
+  if [ "$1" == -p ]; then
+    p=$1
+    shift
+  fi
+  debug "scanning dir $(norm_path "$1") ($2)"...
+  if [ -n "$2" ] && _check_files "$1/"*.yml; then
+    if [ ${deplDefs[$2]+set} ]; then
+      if [ -f "$1/$FILE_DEPLOYMENT" ]; then
+        log warn " ignoring duplicate deployment defintion $2 at $(norm_path "$1")"
+      else
+        log warn " ignoring duplicate deployment info $2 at $(norm_path "$1")"
+      fi
+    else
+      local a=( )
+      _get_array a "$2" deplInfos || true
+      _set_array "$2" deplInfos "$1" "${a[@]}"
+      if [ -f "$1/$FILE_DEPLOYMENT" ]; then
+        debug " found deployment definition $2 at $(norm_path "$1")"
+        deplDefs["$2"]="$1"
+
+        if [ -n "$p" ]; then
+          found "$3  deployment definition $2"
+        fi
+
+      else
+        debug " found deployment info $2 at $(norm_path "$1")"
+        if [ -n "$p" ]; then
+          found "$3  deployment config for $2"
+        fi
+      fi
+    fi
+  else
+    for i in "$1"/*; do
+      if [ -d "$i" ]; then
+        _scanDeployments $p "$i" "$2${2:+/}$(basename "$i")" "$3"
+      fi
+    done
+  fi
+}
+
+_scanModule()
+{
+  local p
+  local i
+  if [ "$1" == -p ]; then
+    p=$1
+    shift
+  fi
+  local m="$(basename "$1")"
+  debug scanning module "$(norm_path "$1")"...
+  if [ "$(basename "$(dirname "$1")")" != $DIR_MODULES ]; then
+    if [ -n "$p" ]; then
+      found "$2landscape"
+    fi
+  else
+    if [ -n "$p" ]; then
+      found "$2module $m"
+    fi
+    if [ ${modDefs[$m]+set} ]; then
+      log warn "duplicate module $m at $(norm_path "$1")"
+    else
+      modDefs[$m]="$1"
+    fi
+  fi
+
+  if [ -d "$1/$DIR_COMPONENTS" ]; then
+    _scanComponents $p "$1/$DIR_COMPONENTS" "" "$2"
+  fi
+  if [ -d "$1/$DIR_DEPLOYMENTS" ]; then
+    _scanDeployments $p "$1/$DIR_DEPLOYMENTS" "" "$2"
+  fi
+  if [ -n "$p" -a -d "$1/$DIR_CONFIG" ]; then
+    _scanConfigs $p "$1/$DIR_CONFIG" "" "$2"
+  fi
+  if [ -d "$1/$DIR_MODULES" ]; then
+    for i in "$1/$DIR_MODULES"/*; do
+      if [ -d "$i" ]; then
+         _scanModule $p "$i" "  $2"
+      fi
+    done
+  fi
+}
+
+
+#
+# res: result array
+_get_list()
+{
+  local line
+  res=( )
+  while IFS='' read -r line; do
+    res+=( "$line" )
+  done
+}
+
+# $1: expr
+# res: result array
+_get_yaml_list()
+{
+  _get_list < <(get_yaml_field - "$1")
+}
+
+# $1: depl name
+setupDeployment()
+{
+  local root="${deplDefs["$1"]}"
+  local def="$(cat "$root/$FILE_DEPLOYMENT")"
+  local comp="$(get_yaml_field - .component <<<"$def")"
+  if [ -z "$comp" ]; then
+    log warn " no component defined for deployment $1"
+  else
+    debug " using component $comp"
+  fi
+  deplComps[$1]="$comp"
+
+  local croot="${compDefs["$comp"]}"
+  if [ -z "$comp" ]; then
+    log warn " component $comp for deployment $1 not defined"
+  fi
+
+  local res
+  _get_yaml_list '.requires[]' <<<"$def"
+  _set_array "$1" deplReqs"${res[@]}"
+  debug " requires ${res[@]}"
+  _get_yaml_list '.context[]' <<<"$def"
+  _set_array "$1" deplCtxs "${res[@]}"
+
+  local c
+  local s=( )
+  for c in "${res[@]}"; do
+    debug " using context $c"
+    _get_list < <(lookupStub "$1" "$c")
+    if [ "${#res[@]}" -eq 0 ]; then
+      warn "context $c not found for $1"
+    else
+      debug "   found" $(norm_path "${res[@]}")
+      s+=( "${res[@]}" )
+    fi
+  done
+  _set_array "$1" deplStubs "${s[@]}"
+}
+
+setupEnv()
+{
+  local d=$(pwd)
+  local names=( )
+  local r
+  local l
+  local n
+  
+  DROOT=
+  DNAME=
+  CROOT=
+  CNAME=
+  MROOT=
+  MNAME=
+
+  if [ -d "$d/$DIR_DEPLOYMENTS" -o -d "$d/$DIR_MODULES" ]; then
+    MROOT="$d" 
+  fi
+  while [ -z "$MROOT" -a "$d" != "/" ]; do
+    n="$(basename "$d")"
+    p="$(dirname "$d")"
+    if _check_files "$d"/*.yml; then
+      r="$d"
+      names=( )
+    fi
+    case "$n" in
+      $DIR_DEPLOYMENTS) 
+        if [ -n "$r" ]; then
+          DNAME="$(_get_path "${names[@]}")"
+          DROOT="$d/$DNAME"
+          log found "Found deployment $DNAME at $DROOT"
+        fi
+        MROOT="$p";;
+      $DIR_COMPONENTS) 
+        if [ -n "$r" ]; then
+          CNAME="$(_get_path "${names[@]}")"
+          CROOT="$d/$CNAME"
+          log found "Found component $CNAME at $CROOT"
+        fi
+        MROOT="$p";;
+      $DIR_MODULES) 
+        if [ -n "$l" ]; then
+          MNAME="$l"
+          MROOT="$d/$l"
+          log found "Found module $l"
+        else
+          MROOT="$(dirname "$d")" 
+        fi;;
+      *)
+        l="$n"
+        names+=( "$n" )
+    esac
+    d="$p"
+  done
+
+  if [ -n "$MROOT" ]; then
+    log found "Found module at $MROOT"
+    LROOT="$MROOT"
+    while [ "$(basename "$(dirname "$LROOT")")" == $DIR_MODULES ]; do
+      if [ -z "$MNAME" ]; then
+        MNAME="$(basename "$LROOT")"
+      fi
+      LROOT="$(dirname "$(dirname "$LROOT")")"
+    done
+    log found "Found landscape root at $LROOT"
+  else
+    Error "no module or landscape found"
+  fi
+}
+
+cacheAll()
+{
+  log info caching landscape...
+  scan "$LROOT"
+
+  debug "*** deployments: ${!deplDefs[@]}"
+  for d in "${!deplDefs[@]}"; do
+    debug "* setup $d"
+    setupDeployment "$d"
+  done
+}

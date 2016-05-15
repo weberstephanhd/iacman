@@ -1,0 +1,130 @@
+###########################################################################
+# data utils
+###########################################################################
+
+declare -Ag __arrays
+declare -Ag __array_exists
+__array_cnt=0
+
+# $1: varname
+# $2: name
+# $3: key
+_get_array()
+{
+  local id=${__arrays[$2]}
+  if [ -n "$id" ]; then
+    local var="${id}__$3"
+    if [ -n "${__array_exists[$var]+x}" ]; then
+      local get="$1=( \"\${$var[@]}\" )"
+      eval $get
+    else
+      return 1
+    fi
+  else
+    return 1
+  fi
+}
+
+# $1: name
+# $2: key
+_list_array()
+{
+  local id=${__arrays[$1]}
+  if [ -n "$id" ]; then
+    local var="${id}__$2"
+    if [ -n "${__array_exists[$var]+x}" ]; then
+      list_array "$var"
+    else
+      return 1
+    fi
+  else
+    return 1
+  fi
+}
+
+# $1: name
+# $2: key 
+# $3+: values
+_set_array()
+{
+  local id=${__arrays[$1]}
+  if [ -z "$id" ]; then
+    id="__array_$__array_cnt"
+    __array_cnt=$(( __array_cmt + 1 ))
+     __arrays[$1]="$id"
+  fi
+
+  local var="${id}__$2"
+  local assign="$var=( \"\${@:3}\" )"
+  eval $assign
+  __array_exists[$var]=X
+}
+
+# $1: name
+# $2: key 
+# $3+: values
+_add_array()
+{
+  local id=${__arrays[$1]}
+  if [ -z "$id" ]; then
+    id="__array_$__array_cnt"
+    __array_cnt=$(( __array_cmt + 1 ))
+     __arrays[$1]="$id"
+  fi
+
+  local var="${id}__$2"
+  local assign="$var+=( \"\${@:3}\" )"
+  eval $assign
+  __array_exists[$var]=X
+}
+
+# $1: name
+# $2: key
+# [$3+]: command
+_fill_array()
+{
+  local id=${__arrays[$1]}
+  if [ -z "$id" ]; then
+    id="__array_$__array_cnt"
+    __array_cnt=$(( __array_cmt + 1 ))
+     __arrays[$1]="$id"
+  fi
+
+  local var="${id}__$2"
+  set_array "$var" "${@:3}"
+  __array_exists["$var"]=X
+}
+
+
+# $1 array name
+# [$2:]: list command
+set_array()
+{
+  local e
+  eval "$1=( )"
+  if [ $# -gt 1 ]; then
+    while read e; do
+      add_array "$1" "$e"
+    done < <( "${@:2}" )
+  else
+    while read e; do
+      add_array "$1" "$e"
+    done
+  fi
+}
+
+# $1: array name
+# $2+: elements
+add_array()
+{
+  assign="$1+=( \"\${@:2}\" )"
+  eval $assign
+}
+
+# $1: array name
+list_array()
+{
+  eval "${2:-dumpargs} \"\${$1[@]}\""
+}
+
+

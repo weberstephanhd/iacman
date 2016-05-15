@@ -1,0 +1,256 @@
+#!/bin/bash -e
+
+SCRIPT_DIR=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
+source "$SCRIPT_DIR/../lib/lsman"
+
+###########################################################################
+# commands
+###########################################################################
+
+########################
+# ls
+CMD_ls()
+{
+  if [ -z "$1" ]; then
+    setupEnv
+    scan -p "$LROOT"
+  else
+    cd "$1"
+    setupEnv
+    if [ -n "$CROOT" ]; then
+      found "component $CNAME"
+    fi
+    if [ -n "$DROOT" ]; then
+      if [ -f "$DROOT/$FILE_DEPLOYMENT" ]; then
+        found "deployment definition for $DNAME"
+      else
+        found "deployment config for $DNAME"
+      fi
+    fi
+    if [ -n "$MROOT" ]; then
+      if [ -z "$MNAME" ]; then
+        found "landscape root"
+      else
+        found "module $MNAME"
+      fi
+      if [ -z "$CROOT" -a -z "$DROOT" ]; then
+        scan -p "$MROOT"
+      fi
+    fi
+  fi
+}
+
+########################
+# show
+showDeployment()
+{
+  local i
+  local p="${deplDefs[$1]}"
+  if [ -z "$p" ]; then
+    Error "deployment $1 not found"
+  fi
+  found "deployment $1"
+  found "  path: $(norm_path "$p")"
+
+  local c="${deplComps[$1]}"
+  if [ -z "$c" ]; then
+    warn "no component declared"
+  else
+    p="${compDefs[$c]}"
+    if [ -z "$p" ]; then
+      warn "  component: $c (undefined)"
+    else
+      found "  component: $c ($(norm_path "$p"))"
+    fi
+  fi
+
+  local a=( )
+  _get_array a "$1" deplInfos || true
+  if [ ${#a[@]} -gt 0 ]; then
+    found "  configurations:"
+    for i in "${a[@]}"; do
+      found "  - $(norm_path "$i")"
+    done
+  fi
+
+  _get_array a "$1" deplReqs || true
+  if [ ${#a[@]} -gt 0 ]; then
+    found "  requires:"
+    for i in "${a[@]}"; do
+      p="${deplDefs[$i]}"
+      if [ -z "$p" ]; then
+        warn "  - $i (undefined)"
+      else
+        found "  - $i ($(norm_path "$p"))"
+      fi
+    done
+  fi
+
+  _get_array a "$1" deplCtxs || true
+  if [ ${#a[@]} -gt 0 ]; then
+    found "  context:"
+    for i in "${a[@]}"; do
+      found "  - $i"
+    done
+  fi
+
+  _get_array a "$1" deplStubs || true
+  if [ ${#a[@]} -gt 0 ]; then
+    found "  stubs:"
+    for i in "${a[@]}"; do
+      found "  - $(norm_path "$i")"
+    done
+  fi
+}
+
+
+showComponent()
+{
+  local i
+  local p="${compDefs[$1]}"
+  if [ -z "$p" ]; then
+    Error "component $1 not found"
+  fi
+  found "component $1"
+  found "  path: $(norm_path "$p")"
+  
+  local f=
+  for i in "${!deplComps[@]}"; do
+    if [ "${deplComps[$i]}" == "$1" ]; then
+      if [ -z "$f" ]; then
+        found "  deployments"
+        f=X
+      fi
+      found "  - $i ($(norm_path "${deplDefs[$1]}"))"
+    fi
+  done
+}
+
+showModule()
+{
+  local p="${modDefs[$1]}"
+  if [ -z "$p" ]; then
+    Error "module $1 not found"
+  fi
+  (
+    declare -A modDefs
+    declare -A deplDefs
+    declare -A compDefs
+    #found "module $1"
+    #found "  path: $(norm_path "$p")"
+    scan -p "$p"
+  )
+}
+
+CMD_show()
+{
+  setupEnv
+  cacheAll
+
+  if [ $# -eq 0 ]; then
+    if [ -n "$CROOT" ]; then
+      found "component $CNAME"
+      showComponent "$CNAME"
+    fi
+    if [ -n "$DROOT" ]; then
+      if [ -f "$DROOT/$FILE_DEPLOYMENT" ]; then
+        found "deployment definition for $DNAME"
+        showDeployment "$DNAME"
+      else
+        found "deployment config for $DNAME"
+        showDeployment "$DNAME"
+      fi
+    fi
+    if [ -z "$CROOT" -a -z "$DROOT" -a -n "$MROOT" ]; then
+      if [ -z "$MNAME" ]; then
+        found "landscape root"
+      else
+        found "module $MNAME"
+      fi
+      scan -p "$MROOT"
+    fi
+  else
+    if [ $# -eq 2 ]; then
+      local type="$(resolve_shortcut "$1" deployment component module)"
+      case "$type" in 
+        deployment)
+          showDeployment "$2";;
+        component)
+          showComponent "$2";;
+        module)
+          showModule "$2";;
+        *) Error "illegal element type $1";;
+      esac
+    else
+      local p="${deplDefs[$1]}"
+      if [ -n "$p" ]; then
+        showDeployment "$1"
+      else 
+        p="${compDefs[$1]}"
+        if [ -n "$p" ]; then
+          showComponent "$1"
+        else
+          p="${modDefs[$1]}"
+          if [ -n "$p" ]; then
+            showModule "$1"
+          else
+            Error "no element with name '$1' found"
+          fi
+        fi
+      fi
+    fi
+  fi
+}
+
+###########################################################################
+# link evaluation
+###########################################################################
+
+link=$(basename "$0")
+if [ "$link" == lm -o "$link" == lsman ]; then
+  cmd="$1"
+  if [ $# -gt 0 ]; then
+    shift
+  fi
+else
+  cmd=${link##lm}
+fi
+
+###########################################################################
+# help
+###########################################################################
+
+if [ -z "$cmd" -o "$1" == help -o "$1" == "--help" -o "$1" == "-help" ]; then
+  echo lsman
+  exit 0
+fi
+
+###########################################################################
+# main
+###########################################################################
+declare -g -A opts
+declare -g -A params
+params=( [lib]= [q]=quiet [D]=debug )
+OPT_parse_options params opts "$@"
+shift $(( _cnt - 1 ))
+
+#
+# support boshman based scripts by providing path to source boshman
+#
+if [ ${opts[lib]+set} ]; then
+  echo "$(dirname "$SCRIPT_DIR")/lib/boshman"
+  exit 0
+fi
+if [ ${opts[quiet]+set} ]; then
+  QUIET=X
+fi
+if [ ${opts[debug]+set} ]; then
+  DEBUG[$location]=X
+fi
+
+
+CMDS=( ls show )
+cmd="$(resolve_shortcut "$cmd" "${CMDS[@]}")"
+
+execute_command "$cmd" CMD_ "${CMDS[*]}" "$@"
+

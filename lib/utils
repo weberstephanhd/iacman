@@ -1,0 +1,881 @@
+
+
+###############
+# to be done
+################
+
+declare -g -A COLORIZED
+
+
+set_color_for_text()
+{
+  COLORIZED["$1"]="$2"
+}
+
+colorize_text()
+{
+  #echo COLORED: "${!COLORIZED[@]}"
+  local c=()
+  for t in "${!COLORIZED[@]}"; do
+    c+=(-e 's/\([(/ ]\)'"$t"'\([)(/ ]\)/\1'"${COLORIZED["$t"]}$t$COLOR_END"'\2/g')
+  done
+  #echo CMD: "${c[@]}"
+  if [ -z "$c" ]; then
+    cat
+  else
+    sed  "${c[@]}"
+  fi
+}
+
+reset_colorize()
+{
+  unset COLORIZE[@]
+  declare -g -A COLORIZED
+}
+
+Void()
+{
+  true
+}
+
+################
+# check availability of an argument value
+#
+# $1: value
+# $2+: meaning of value
+################
+require_arg()
+{
+  if [ -z "$1" ]; then
+    Error "${*:2}" required
+  fi
+}
+
+################
+# get a required mapping
+#
+# $1: value to map
+# $2: mapper function
+# $3: value type for error message
+################
+get_required_mapping()
+{
+  local r="$($2 $1)"
+  if [ -z "$r" ]; then
+    Error "$3 $1 not found"
+  else
+    echo $r
+  fi
+}
+
+################
+# print entries of an associative array
+# $1: array name
+################
+print_fields()
+{
+  eval local names=( "\${!$1[@]}" )
+  for f in "${names[@]}"; do
+    eval local v="\${$1[\$f]}"
+    echo "$f |$v" 
+  done | ( echo "Field|Value"; sort ) | column -t -s \|
+}
+
+################
+# Execute command preserving the actual exit status
+################
+exec_preserving_status()
+{
+  local s=$?
+   "$@"
+  return $s
+}
+
+################
+# execute some command in folder of given file
+# $1: file, path to folder must exist
+# $2+: command
+#
+# command/handler interface is <handler> <local file path> <given file path>
+################
+exec_cmd_for_file()
+{
+  local f="$1"
+  local d="$(dirname "$f")"
+  local b="$(basename "$f")"
+  if [ ! -d "$d" ]; then
+    warn "directory of '$f' does not exist"
+    return 1
+  fi
+  (
+    unset GIT_DIR
+    set -e
+    cd "$d"
+
+    #info DIR=$d
+    #info EXEC:"${@:2}"
+    "${@:2}"
+  )
+}
+
+############################################################################
+# Path utils
+############################################################################
+
+################
+# find a root folder of some file system structure
+# $1: test option for [ ] command
+# $2+: filename expected to be present to define a root folder
+################
+get_root()
+{
+  local d=$(pwd)
+  local cond
+  local sep
+  local c
+  for f in ${@:2}; do
+    c="$cond$sep$1 \"\$d/$f\""
+    if [ "$1" == "-F" ]; then
+      c="-f \"\$d/$f\" -a ! -h \"\$d/$f\""
+    fi
+    if [ "$1" == "-D" ]; then
+      c="-d \"\$d/$f\" -a ! -h \"\$d/$f\""
+    fi
+    cond="$cond$sep\( $c \)"
+    sep=" -o "
+  done
+
+  while [ "$d" != "/" ]; do
+    if eval "[ $cond ]"; then
+      echo $d
+      exit 0
+    fi
+    d=$(dirname "$d")
+  done
+}
+
+
+################
+# get absolute path for a path
+#
+# $1 : relative filename (at least directory must exist)
+################
+abspath()
+{
+  if [ -d "$1" ]; then
+    ( cd "$1"; pwd )
+  else
+    local p="${1%%/}"
+    local t
+    while t="${p%%/.}"; [ "$p" != "$t" ]; do
+      p="${t%%/}"
+    done
+    p="$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
+    t="${p%%/..}"
+    [ "$t" == "$p" ] && echo "$p" || dirname "$t"
+  fi
+}
+
+################
+# get relative path
+# 
+# $1: base path   (from)
+# $2: target path (to)
+################
+relpath()
+{
+  [ $# -ge 1 -a $# -le 2 ] || Error two paths required
+  local current="${2:+"$1"}"
+  local target="${2:-"$1"}"
+  [ "$target" != . ] || target=/
+  target="/${target##/}"
+  [ "$current" != . ] || current=/
+  current="${current:="/"}"
+  current="/${current##/}"
+  local appendix="${target##/}"
+  local relative=''
+  while appendix="${target#"$current"/}"
+      [ "$current" != '/' ] && [ "$appendix" = "$target" ]; do
+      if [ "$current" = "$appendix" ]; then
+          relative="${relative:-.}"
+          echo "${relative#/}"
+          return 0
+      fi
+      current="${current%/*}"
+      relative="$relative${relative:+/}.."
+  done
+  relative="$relative${relative:+${appendix:+/}}${appendix#/}"
+  echo "$relative"
+}
+
+############################################################################
+# String utils
+############################################################################
+
+################
+# transform to lower case
+#
+# [$1] value to transform, otherwise stream mode is used
+################
+tolower()
+{
+  if [ $# -gt 0 ]; then
+    tolower <<<"$*"
+  else
+    tr '[:upper:]' '[:lower:]'
+  fi
+}
+
+################
+# remove leading and trailing spaces from lines of a stream
+#
+# [$1] value to trim, otherwise stream mode is used
+################
+trim()
+{
+  if [ $# -gt 0 ]; then
+    trim <<<"$1"
+  else
+    sed -e 's/^\s*//' -e 's/\s*$//'
+  fi
+}
+
+
+################
+# remove quotes from quoated lines of a stream
+#
+# [$1] value to trim, otherwise stream mode is used
+################
+unquote()
+{
+  if [ $# -gt 0 ]; then
+    unquote <<<"$1"
+  else
+    sed -e 's/^\s*"//' -e 's/"\s*$//'
+  fi
+}
+
+################
+# get last n character
+#
+# $1: string
+# $2: number of characters to extract
+################
+extract_last()
+{
+  if [ "$2" -gt 0 ]; then
+    expr "$1" : ".*\(.\{$2\}\)"
+  fi
+}
+
+################
+# get first n character
+#
+# $1: string
+# $2: number of characters to extract
+################
+extract_first()
+{
+  if [ "$2" -gt 0 ]; then
+    expr "$1" : "\(.\{$2\}\).*"
+  fi
+}
+
+################
+# match prefix
+#
+# $1: string
+# $2: prefix to match
+################
+match_prefix()
+{
+  [[ "$1" =~ $2.* ]]
+}
+
+
+############################################################################
+# stream
+############################################################################
+
+join_lines()
+{
+  local line
+  while read line; do
+    echo -n "$line"
+  done
+}
+
+dumpargs()
+{
+  local i
+  for i; do
+    echo "$i"
+  done
+}
+
+dumpargs_err()
+{
+  local i
+  for i; do
+    error "$i"
+  done
+}
+
+############################################################################
+# lists
+############################################################################
+
+################
+# uniq list
+# $@ elements
+################
+uniq_list()
+{
+  for e; do
+    echo "$e"
+  done | sort | uniq
+}
+
+################
+# check whether a given argument list contains the first argument
+#
+# $1: value to look for
+# $@:2 set of value to check
+################
+contains()
+{
+  local e
+  for e in "${@:2}"; do [[ "$e" == "$1" ]] && return 0; done
+  return 1
+}
+
+################
+# split a string according to a dedicated delimiter set
+# and quote the resultimg parts
+#
+# $1: delimiter
+# $2: string
+################
+quoted_split()
+{
+  ( IFS="$1"
+    shift
+    for n in $*; do
+      echo \"$n\"
+    done
+  )
+}
+
+################
+# split a string according to a dedicated delimiter set
+# into one line per field
+#
+# $1: delimiter
+# $2: string
+################
+split()
+{
+  ( IFS="$1"
+    shift
+    for n in $*; do
+      echo $n
+    done
+  )
+}
+
+################
+# split string into characters
+# $1: string
+################
+split_into_chars()
+{
+  if [ $# -gt 0 ]; then
+    for i; do 
+       echo "$i"
+    done | split_into_chars
+  else
+    grep -o .
+  fi
+}
+
+################
+# as list
+#
+# $1: separator character
+# $@:2 set of values
+################
+as_list()
+{
+  local e
+  local l
+  local sep
+  for e in "${@:2}"; do l="$l$sep$e"; sep="$1"; done
+  echo "$l"
+}
+
+############################################################################
+#
+############################################################################
+
+################
+# map os json output to correct json
+#
+# [$1] os json string
+################
+norm_json()
+{
+  if [ $# -gt 0 ]; then
+    norm_json <<<"$1"
+  else
+    sed -e "s/u'\([^']*\)'/\"\1\"/g" -e 's/: None/: "None"/g'
+  fi
+}
+
+################
+# filter to remove a dedicated value from a stream
+################
+ignore_value()
+{
+  awk '$0 != "'$1'" { print $0 }' 
+}
+
+################
+# lookup a dedicated field for dedicated entry in a list entries from 
+# provided by openstack commands
+# $1: the name of the entry to lookup ( first field in entry list )
+# $2: the index of the requested field 
+################
+lookup_entry()
+{
+  local no=$(( $2 + 1 ))
+  awk -F \| "\$2 ~ /^ *$1 *$/ { print \$$no }" | trim
+}
+
+################
+# lookup a dedicated field for dedicated entry in a list entries from 
+# provided by openstack commands
+# $1: the key field number
+# $2: the name of the entry to lookup ( first field in entry list )
+# $3: the index of the requested field 
+################
+_lookup_entry()
+{
+  local no=$(( $3 + 1 ))
+  local key=$(( $1 + 1 ))
+  awk -F \| "\$$key ~ /^ *$2 *$/ { print \$$no }" | trim
+}
+
+################
+# get a dedicated entry in an entry line
+# $1: the entry line
+# $2: the index of the requested field 
+################
+get_field()
+{
+  local no=$(( $2 + 1 ))
+  awk -F \| "{ print \$$no }" <<<"$1" | trim
+}
+
+################
+# get a dedicated entry in an entry line and extract a dedicated json path
+# $1: the entry line
+# $2: the index of the requested field 
+# $3: the json path expression
+################
+get_json_sub_field()
+{
+  get_json_field "$(get_field "$1" "$2")" "$3"
+}
+
+
+################
+# get a dedicated entry in a yaml file
+# $1: yaml file
+# $2: field path
+################
+get_yaml_field()
+{
+  if [ -z "$1"  -o "$1" == "-" ]; then
+    yaml2json
+  else
+    yaml2json <"$1" 
+  fi | jq -r "$2" 2>/dev/null | ignore_value null
+}
+
+get_yaml_path()
+{
+  if [ -z "$1"  -o "$1" == "-" ]; then
+    yaml2json
+  else
+    yaml2json <"$1"
+  fi | jq "$2" 
+}
+
+################
+# get a dedicated entry in an entry line
+# $1: the json text
+# $2: the path of the requested field 
+################
+get_json_field()
+{
+  norm_json <<< "$1" | jq "$2" | ignore_value null | unquote
+}
+
+################
+# filter a list output for a sequence of fields
+# Fields are separated by spaces in the output, therefore only one or two
+# fields make sense for values that may contain spaces.
+# This function is used to handle openstack show command output.
+#
+# now it gets really strange:
+#  - a property field may have multiple lines, where the followup line 
+#    have an empty key field. This is handled by repeating the key name here
+#    in the output. This is prepared by appropriate shell variables
+#       - last: contains the output spec refering to the awk last variable
+#       - fields: contains the output spec used for the first line of a prop
+#  - for nova servers the properties are partly generated for attached networks
+#    using the network name (including spaces) followed by the key network.
+#    To support this the spaces in keys must be replaced (here the - character)
+#    to allow shell space separated read commands (read a b) where a is the
+#    property and b the complete rest of the line
+# $*: the field numbers to echo
+################
+filter_fields()
+{
+  _filter_fields 1 "$@"
+}
+
+_filter_fields()
+{
+  local start=$1
+  shift
+  local fields=
+  local sep="print"
+  local first
+  for f; do
+    if [ "$sep" != "," ]; then
+      first="\$$(( $f + 1 ))"
+      last="$last$sep last"
+      fields="$fields$sep first"
+    else
+      last="$last$sep \$$(( $f + 1 ))"
+      fields="$fields$sep \$$(( $f + 1 ))"
+    fi
+    sep=","
+  done
+  awk -F \| "BEGIN { l=0; last=\"\" };  NF > 2 { first=$first; gsub(/^ */,\"\",first); gsub(/ *\$/,\"\",first); gsub(/ /,\"-\",first); if (l++>=$start) { if ($first~/^ *\$/) $last; else { $fields; last=$first }}}" | trim
+}
+
+################
+# lookup a dedicated field in json data provided for a dedicated entry
+# in a list entries from provided by openstack commands
+# $1: the name of the entry to lookup ( first field in entry list )
+# $2: the index of the requested table field
+# $3: the json path expression to extract the data from the json object
+################
+lookup_json_entry()
+{
+  lookup_entry "$1" "$2" | norm_json | jq "$3" | ignore_value null | unquote
+}
+
+
+################
+# setup an associated array for a list of fields
+#
+# $1: array name
+# $2: show command to provide list output
+################
+read_field_list()
+{
+  while read a b; do
+    local key="$(tolower "$a")"
+    #info "$1[\"\$key\"]=\"\$b\""
+    eval $1[\"\$key\"]=\"\$b\"
+  done < <( $2 | filter_fields 1 2 )
+}
+
+################
+# setup an associated array for a list of fields
+#
+# $1: array name
+# $2: file name of list ouput to parse
+################
+read_field_list_from_file()
+{
+  read_field_list $1 "cat" <"$2"
+}
+
+################
+# setup a set of cached mappings based on a list output
+# the mapping key for all those common mappings is the first field
+# it is possible to setup caches for any number of fields provided by the list
+# reverse mappings are indicated by an array name starting with a ':'
+
+# $1: the command to execute to get the list to cache
+# followed by any number (greater 0) of argument pairs
+# $2: the name of the associative array to store the mapping
+# $3: the number of the field to extract the mapped value from
+################
+setup_cache()
+{
+  declare -A maps
+  declare -A revs
+
+  local cmd="$1"
+  local no
+  local map
+  local id
+  local field
+
+  shift
+  while [ $# -gt 1 ]; do
+    map=${1#:}
+    if [ "$map" = "$1" ]; then
+      maps[$2]=$map
+    else
+      revs[$2]=$map
+    fi
+    shift 2
+  done
+
+  while read line; do
+    no=0
+    while read field; do
+      if [[ $no == 1 ]]; then
+        if [[ "$(tolower "$field")" == "id" ]]; then
+          break;
+        fi
+        id="$field"
+      fi
+      if [ -n "$id" ]; then
+        map="${maps[$no]}"
+        if [ -n "$map" ]; then
+          eval $map\[\$id\]=\"\$field\"
+        fi
+        map="${revs[$no]}"
+        if [ -n "$map" -a -n "$field" ]; then
+          eval $map\[\$field\]=\"\$id\"
+        fi
+      fi
+      no=$((no + 1))
+    done < <( split "|" "$line" )
+  done < <( $cmd )
+}
+
+
+################
+# lookup an entry, but use a cache before executing a dedicated element query
+#
+# $1: name of associative array
+# $2: command to query element
+# $3: element id
+# $4: field name
+# [$5]: default value
+################
+lookup_cached_query_entry()
+{
+  eval local n=\${$1["\$3"]}
+  if [ -z "$n" ]; then
+    debug "not in cache"
+    n="$($2 "$3"| lookup_entry "$4" 2)" 
+  fi
+  if [ -z "$n" ]; then
+    debug "not found"
+    echo $5
+  else
+    echo "$n"
+  fi
+}
+
+
+################
+# lookup an entry, but use a cache before executing a list query
+#
+# $1: name of associative array
+# $2: command to query list
+# $3: key
+# $4: number of field to query on demand
+# [$5]: default value
+################
+lookup_cached_entry()
+{
+  eval local n=\${$1["\$3"]}
+  if [ -z "$n" ]; then
+    debug "not in cache"
+    n=$($2 | lookup_entry "$3" $4)
+  fi
+  if [ -z "$n" ]; then
+    debug "not found"
+    echo $5
+  else
+    echo $n
+  fi
+}
+
+################
+# lookup an entry for a key field, but use a cache before executing a list query
+#
+# $1: name of associative array
+# $2: command to query list
+# $3: number of key field
+# $4: key
+# $5: number of field to query on demand
+# [$6]: default value
+################
+_lookup_cached_entry()
+{
+  eval local n=\${$1["\$4"]}
+  if [ -z "$n" ]; then
+    debug "not in cache"
+    n=$($2 | _lookup_entry $3 "$4" $5)
+  fi
+  if [ -z "$n" ]; then
+    debug "not found"
+    echo $6
+  else
+    echo $n
+  fi
+}
+
+
+################
+# lookup an entry in a list with an optional second field to match
+# 
+# $1 key to match
+# $2 numer of field to return
+# $3 second key field number
+################
+lookup_alt_entry()
+{
+  while read line; do
+    local id="$(get_field "$line" 1)"
+    local n="$(get_field "$line" $3)"
+    if [ "$1" == "$id" -o "$1" == "$n" ]; then
+      if [ $2 -eq 1 ]; then
+        echo $id
+      else
+        get_field "$line" $2
+      fi
+      break
+    fi
+  done
+}
+
+headline()
+{
+  as_list \| "$@"
+  cat
+}
+
+as_table()
+{
+  headline "$@" | __format_table |  (
+    read a
+    color_title "$a"
+    colorize_text 
+  )
+}
+
+__format_table()
+{
+  #column -s \| -t
+  format "  "
+}
+
+############################################################################
+# commands
+############################################################################
+
+################
+# Resolve a shortcut for a given set of values
+# The resolution is fpund as follows  (in given order)
+# - the given value directly is identical to a possible choice
+# - if the given value is a prefix of the possible choice, then the first
+#   match is chosen.
+# - if the given value is part of the possible choice, then the first
+# - the given value
+#
+# $1:  the value to resolve
+# $2+: the possible choices
+################
+resolve_shortcut()
+{
+  if ! contains "$1" "${@:2}"; then
+    for c in "${@:2}"; do
+      if [[ "$c" =~ $1.* ]];  then
+        echo "$c"
+        return 0
+      fi
+    done
+    for c in "${@:2}"; do
+      if [[ "$c" =~ .*$1.* ]];  then
+        echo "$c"
+        return 0
+      fi
+    done
+  fi
+  echo "$1"
+}
+
+################
+#
+# $1: the command value
+# $2: the function prefix
+# $3: possible command completions (space separated)
+# $4+: command arguments
+# options:
+#   --invalid= function to call for invalid command
+################
+execute_command()
+{
+  local errf=
+  
+  while [ $# -gt 0 -a "${1#--}" != "$1" ]; do 
+    case "$1" in
+      --invalid=*) errf="${1#--invalid=}";;
+      *) Error "unknown option $1";;
+    esac
+    shift
+  done
+
+  local cmd="$(resolve_shortcut "$1" $3)"
+  if [ "$(type -t "$2$cmd")" == "function" ]; then
+    $2$cmd "${@:4}"
+  else
+    if [ -n "$errf" ]; then
+      $errf "$2" "$cmd" "${@:4}"
+    else
+      error "invalid command $cmd"
+      return 1
+    fi
+  fi
+}
+
+
+################
+# Add an entry to the PATH variable in .bashrc
+#
+# $1: entry
+################
+add_path_entry()
+{
+  local file
+  if [ -f ~/.profile ]; then
+    file=~/.profile
+  else
+    if [ -f ~/.bashrc ]; then
+      file=~/.bashrc
+    fi
+  fi
+
+  if [ -n "$file" ]; then
+    ( grep 'export PATH="$PATH:'"$1"'"'  "$file" >/dev/null && 
+      found "Found path entry '"$1"'"
+    ) || (
+      echo 'export PATH="$PATH:'"$1"'"' >> "$file"
+      confirm "Created path entry '$1'"
+    )
+  else
+    warn "no ~/.bashrc or ~/.profile found"
+  fi
+}
