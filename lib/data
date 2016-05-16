@@ -50,12 +50,18 @@ _set_array()
   local id=${__arrays[$1]}
   if [ -z "$id" ]; then
     id="__array_$__array_cnt"
-    __array_cnt=$(( __array_cmt + 1 ))
+    __array_cnt=$(( __array_cnt + 1 ))
      __arrays[$1]="$id"
   fi
 
   local var="${id}__$2"
-  local assign="$var=( \"\${@:3}\" )"
+  local assign
+  if [ $# -gt 2 ]; then
+    assign="$var=( \"\${@:3}\" )"
+  else
+    assign="$var=( )"
+  fi
+  #debug "$assign"
   eval $assign
   __array_exists[$var]=X
 }
@@ -103,7 +109,7 @@ set_array()
   local e
   eval "$1=( )"
   if [ $# -gt 1 ]; then
-    while read e; do
+    while IFS='' read -r e; do
       add_array "$1" "$e"
     done < <( "${@:2}" )
   else

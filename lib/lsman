@@ -51,6 +51,75 @@ check_opts()
   return 1
 }
 
+uniq()
+{
+  local a=( )
+  for e; do
+    if ! contains "$e" "${a[@]}"; then
+      echo "$e"
+      a+=( "$e" )
+    fi
+  done
+}
+
+###########################################################################
+# command line utils
+###########################################################################
+
+declare -gA opts
+
+require_deplname()
+{
+  if [ -n "$1" ]; then
+    echo "$1"
+  else
+    require_default_deplname deployment name required
+  fi
+}
+
+deplname_from_args()
+{
+  require_default_deplname "not in a deployment -> use option -d to specify deployment name"
+}
+
+# $@: error message
+require_default_deplname()
+{
+  if [ ${opts[deployment]+set} ]; then
+    echo "${opts[deployment]}"
+  else
+    if [ -n "$DNAME" ]; then
+      echo "$DNAME"
+    else
+      if [ -n "$CNAME" ]; then
+        local a=( )
+        set_array a get_component_deployments "$CNAME"
+        if [ ${#a[@]} -eq 1 ]; then
+          echo "${a[0]}"
+        else
+          if [ ${#a[@]} -eq 0 ]; then
+            Error "${ERRCTX}${ERRCTX:+: }no deployment for component $CNAME"
+          else
+            Error "${ERRCTX}${ERRCTX:+: }multiple deployments for component $CNAME"
+          fi
+        fi
+      else
+        Error "${ERRCTX}${ERRCTX:+: }$@"
+      fi
+    fi
+  fi
+}
+
+# $1: deployment name
+get_component_deployments()
+{
+  for i in "${!deplComps[@]}"; do
+    if [ "${deplComps[$i]}" == "$1" ]; then
+      echo "$1"
+    fi
+  done
+}
+
 ###########################################################################
 # landscape data
 ###########################################################################
@@ -64,8 +133,9 @@ declare -gA compDefs
 # component API
 ###########################################################################
 
-SCRIPT_CREATE_EXPORTS=scripts/create_exports
-SCRIPT_CREATE_MANIFEST=scripts/create_manifest
+DIR_SCRIPTS=scripts
+SCRIPT_CREATE_EXPORTS=$DIR_SCRIPTS/create_exports
+SCRIPT_CREATE_MANIFEST=$DIR_SCRIPTS/create_manifest
 
 # $1: name
 # $2: ctx
@@ -165,6 +235,7 @@ DIR_MODULES=modules
 DIR_COMPONENTS=components
 DIR_CONFIG=config
 
+FILE_COMPONENT=component.yml
 FILE_DEPLOYMENT=deployment.yml
 
 SCRIPT_MANIFEST=scripts/create_manifest
@@ -419,33 +490,56 @@ _get_yaml_list()
 }
 
 # $1: depl name
+setupComponent()
+{
+  local root="${compDefs["$1"]}"
+  if [ -f "$root/$FILE_COMPONENT" ]; then
+    local def="$(cat "$root/$FILE_COMPONENT")"
+
+    debug " analyse context..."
+    _get_yaml_list '.context[]' <<<"$def"
+    debug " context ${res[@]}"
+    _set_array "$1" compCtxs "${res[@]}"
+  else
+    _set_array "$1" compCtxs
+  fi
+}
+
+# $1: depl name
 setupDeployment()
 {
+  local ctxs=( )
   local root="${deplDefs["$1"]}"
   local def="$(cat "$root/$FILE_DEPLOYMENT")"
   local comp="$(get_yaml_field - .component <<<"$def")"
   if [ -z "$comp" ]; then
     log warn " no component defined for deployment $1"
   else
-    debug " using component $comp"
+    local croot="${compDefs["$comp"]}"
+    if [ -z "$croot" ]; then
+      log warn " component $comp for deployment $1 not defined"
+    else
+      debug " using component $comp"
+      _get_array ctxs "$comp" compCtxs
+      debug " component contexts: ${ctxs[@]}"
+    fi
   fi
   deplComps[$1]="$comp"
 
-  local croot="${compDefs["$comp"]}"
-  if [ -z "$comp" ]; then
-    log warn " component $comp for deployment $1 not defined"
-  fi
 
-  debug "analyse imports"
-  local res
+  debug " analyse imports..."
+  local res=( )
   _get_yaml_list '.requires[]' <<<"$def"
   debug " requires ${res[@]}"
   _set_array "$1" deplReqs "${res[@]}"
 
-  debug "analyse context"
+  debug " analyse context..."
   _get_yaml_list '.context[]' <<<"$def"
   debug " context ${res[@]}"
   _set_array "$1" deplCtxs "${res[@]}"
+
+  set_array res uniq "${ctxs[@]}" "${res[@]}"
+  debug " effective context ${res[@]}"
 
   local c
   local s=( )
@@ -532,16 +626,27 @@ setupEnv()
   fi
 }
 
+# $1: type
+# $2+: names
+setupType()
+{
+  local e
+  if [ $# -gt 1 ]; then
+    debug "*** ${1}s: ${@:2}"
+    for e in "${@:2}"; do
+      debug "* setup $e"
+      setup${1^} "$e"
+    done
+  fi
+}
+
 cacheAll()
 {
   log info caching landscape...
   scan "$LROOT"
 
-  debug "*** deployments: ${!deplDefs[@]}"
-  for d in "${!deplDefs[@]}"; do
-    debug "* setup $d"
-    setupDeployment "$d"
-  done
+  setupType component "${!compDefs[@]}"
+  setupType deployment "${!deplDefs[@]}"
 }
 
 ###########################################################################
@@ -566,14 +671,14 @@ _generate()
 
   mkdir -p "$2/$1"
   {
-    echo "import:"
+    echo "imports:"
     get_imports imps "$1"
     for i in "${imps[@]}"; do
       if [ -f "$2/$i/$GEN_EXP" ]; then
         echo "  $(_map_name "$i"): $(yaml2json <"$2/$i/$GEN_EXP")"
-        title "  imp $i: $(yaml2json <"$2/$i/$GEN_EXP")"
+        log title "    imp $i: $(md5sum "$2/$i/$GEN_EXP")"
       else
-        warn "  no import for $i"
+        log warn "    no import for $i"
       fi
     done 
   } >"$2/$1/$GEN_IMP"
@@ -585,11 +690,11 @@ _generate()
 
   local ctx=$2/$1/$GEN_CTX
   if [ -n "${opts[spiff]+x}" ]; then
-    info spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" 
+    log info spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" 
   fi
   spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" >"$ctx"
   SCRIPT_create_exports "$1" "$ctx" >"$2/$1/$GEN_EXP"
-  confirm "  exp: $(cat "$2/$1/$GEN_EXP")"
+  log confirm "    exp: $(md5sum "$2/$1/$GEN_EXP")"
 }
 
 # $1: array name
@@ -668,12 +773,12 @@ _generate_list()
 
   mod=
   for i in ${@:2}; do
-    info "generate $i"
+    log info "  generate $i"
     if [ -f "$1/$i/$GEN_EXP" ]; then
       old="$(cat "$1/$i/$GEN_EXP")"
       _generate $i "$1"
       if [ "$old" != "$(cat "$1/$i/$GEN_EXP")" ]; then
-        info "$i has changed"
+        log hint "    $i has changed -> regenerate cycle"
         mod=X
       fi
     else
@@ -693,16 +798,16 @@ generate_exports()
     list_array __missing dumpargs_err
     return 1
   fi
-  info "target $1: ${imps[@]}"
+  log info "target $1: ${imps[@]}"
   if ! contains $1 "${imps[@]}"; then
     imps+=( "$1" )
   fi
   _generate_list "$2" "${imps[@]}"
   if has_cycle "$1"; then
-    info "cycle detected"
+    log hint "  cycle detected"
     local mod=X
     while [ -n "$mod" ]; do
-      info "regenerate"
+      log info "regenerate cycle"
       _generate_list "$2" "${imps[@]}"
     done
   fi
@@ -714,7 +819,7 @@ generate_exports()
 generate_manifest()
 {
   generate_exports "$@"
-  info generating manifest
+  log info generating manifest
   local gen="$LROOT/$DIR_DEPLOYMENTS/$1/gen"
   SCRIPT_create_manifest "$1" "$gen/$GEN_CTX" > "$gen/$GEN_MANIFEST"
 }
