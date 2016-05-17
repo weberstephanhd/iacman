@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 SCRIPT_DIR=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
-source "$SCRIPT_DIR/../lib/lsman"
+source "$SCRIPT_DIR/../lib/iacman"
 
 ###########################################################################
 # commands
@@ -328,13 +328,13 @@ CMD_deploy()
 ###########################################################################
 
 link=$(basename "$0")
-if [ "$link" == lm -o "$link" == lsman ]; then
+if [ "$link" == iac ]; then
   cmd="$1"
   if [ $# -gt 0 ]; then
     shift
   fi
 else
-  cmd=${link##lm}
+  cmd=${link##iac}
 fi
 
 ###########################################################################
@@ -343,7 +343,7 @@ fi
 
 if [ -z "$cmd" -o "$cmd" == help -o "$cmd" == "--help" -o "$cmd" == "-help" ]; then
   found lsman - landscape management tool
-  title "lm/lsman [<options>] <command> [<args>]"
+  title "iac [<options>] <command> [<args>]"
   found
   found "Options:"
   found "  -q         quiet"
@@ -359,11 +359,11 @@ if [ -z "$cmd" -o "$cmd" == help -o "$cmd" == "--help" -o "$cmd" == "-help" ]; t
   found "  script <name>  <args>         execute arbitrary script for deployment"
   found "  prepare                       execute prepare script"
   found "  manifest                      generate manifest"
-  info  "                                context provided by lm and passed as argument"
+  info  "                                context provided by iac and passed as argument"
   info  "                                this script is defaulted by using"
   info  "                                the context as manifest."
   found "  exports                       generate exports"
-  info  "                                context provided by lm and passed as argument"
+  info  "                                context provided by iac and passed as argument"
   info  "                                this script is defaulted by generating"
   info  "                                the manifest and reading the exports section."
   found "  plan                          execute plan script"
