@@ -141,13 +141,14 @@ SCRIPT_CREATE_MANIFEST=$DIR_SCRIPTS/create_manifest
 # $2: ctx
 SCRIPT_create_exports()
 {
+  local inst="$(get_instance_dir "$1")"
   local s="$(get_script "$1" $SCRIPT_CREATE_EXPORTS)"
   if [ -n "$s"  ]; then
-    "$s" "$2" 
+    "$s" "-d" "$inst" "$2" 
   else
     s="$(get_script "$1" $SCRIPT_CREATE_MANIFEST)"
     if [ -n "$s"  ]; then
-      "$s" "$2"
+      "$s" "-d" "$inst" "$2"
     else
       cat "$2"
     fi | yaml2json | jq .exports | spiff merge -
@@ -225,6 +226,16 @@ get_script()
   local c="$(get_deployment_component "$1")"
 
   _filter_file "$d/$2" -e || _filter_file "$c/$2" || true
+}
+
+get_instance_dir()
+{
+  echo "$LROOT/$DIR_DEPLOYMENTS/$1"
+}
+
+get_instance_gen_dir()
+{
+  echo "$(get_instance_dir "$1")/gen"
 }
 
 ###########################################################################
@@ -811,7 +822,7 @@ generate_exports()
       _generate_list "$2" "${imps[@]}"
     done
   fi
-  local gen="$LROOT/$DIR_DEPLOYMENTS/$1/gen"
+  local gen="$(get_instance_gen_dir "$1")"
   mkdir -p "$gen"
   mv "$2/$1"/* "$gen"
 }
@@ -820,6 +831,6 @@ generate_manifest()
 {
   generate_exports "$@"
   log info generating manifest
-  local gen="$LROOT/$DIR_DEPLOYMENTS/$1/gen"
+  local gen="$(get_instance_gen_dir "$1")"
   SCRIPT_create_manifest "$1" "$gen/$GEN_CTX" > "$gen/$GEN_MANIFEST"
 }

@@ -297,7 +297,8 @@ exec_script()
   if [ -z "$p" ]; then
     Error "${ERRCTX}${ERRCTX:+: }script '$s' not found for '$n'"
   fi
-  "$p" "$@"
+  local inst="$(get_instance_dir "$n")"
+  "$p" -d "$inst" "$@"
 }
 
 CMD_script()
