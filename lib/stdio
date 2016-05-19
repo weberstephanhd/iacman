@@ -14,6 +14,7 @@ declare -g -A DEBUG
 location=debug
 
 color_mode=X
+color_bold=X
 
 debug()
 {
@@ -31,6 +32,8 @@ COLOR_CYAN=$'\e[0;36m'
 COLOR_LIGHT=$'\e[0;37m'
 COLOR_DARK=$'\e[0;90m'
 COLOR_END=$'\e[0m'
+
+COLOR_BOLD=$'\e[1m'
 
 remove_color()
 {
@@ -51,7 +54,7 @@ _echo()
     o="-n"
     shift
   fi
-  [ "$color_mode" ] && echo $o "${c}$*${COLOR_END}"  || echo $o "$@"
+  [ "$color_mode" -a -t 1 ] && echo $o "${c}${color_bold:+$COLOR_BOLD}$*${COLOR_END}"  || echo $o "$@"
 }
 
 info()
@@ -157,6 +160,11 @@ color_dark()
   _echo "${COLOR_DARK}" "$@"
 }
 
+color_light()
+{
+  _echo "${COLOR_LIGHT}" "$@"
+}
+
 color_green()
 {
   _echo "${COLOR_GREEN}" "$@"
@@ -166,4 +174,17 @@ color_blue()
 {
   _echo "${COLOR_BLUE}" "$@"
 }
+
+color_magenta()
+{
+  _echo "${COLOR_MAGENTA}" "$@"
+}
+
+bold()
+{
+  _echo "${COLOR_BOLD}" "$@"
+}
+
+
+
 

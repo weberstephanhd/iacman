@@ -7,6 +7,20 @@ source "$SCRIPT_DIR/../lib/iacman"
 # commands
 ###########################################################################
 
+CMD_colors()
+{
+  color_red     "***   red   ***"
+  color_yellow  "***  yellow ***"
+  color_green   "***   green ***"
+  color_blue    "***   blue  ***"
+  color_magenta "*** magenta ***"
+  color_cyan    "***   cyan  ***"
+  color_dark    "***   dark  ***"
+  color_light   "***  light  ***"
+  found         "***  normal ***"
+  bold          "***   bold  ***"
+}
+
 ########################
 # lib
 CMD_lib()
@@ -49,6 +63,27 @@ CMD_ls()
 
 ########################
 # show
+
+# $1: name
+# $2: key
+# $3: title
+# [$4]: filter command
+_showHashedList()
+{
+  local a=( )
+  _get_array a "$1" "$2" || true
+  if [ ${#a[@]} -gt 0 ]; then
+    title "  ${3}:"
+    for i in "${a[@]}"; do
+      if [ -n "$4" ]; then
+        found "  - $($4 "$i")"
+      else
+        found "  - $i"
+      fi
+    done
+  fi
+}
+
 showDeployment()
 {
   local i
@@ -58,11 +93,17 @@ showDeployment()
     Error "deployment $1 not found"
   fi
   if [ -f "$p/$FILE_DEPLOYMENT" ]; then
-    found "deployment definition $1"
+    confirm "deployment definition $1"
   else
-    found "deployment configuration $1"
+    confirm "deployment configuration $1"
   fi
   found "  path: $(norm_path "$p")"
+  if [ ! ${deplActive[$1]:+set} ]; then
+    color_red "  INACTIVE"
+  fi
+
+  _showHashedList "$1" deplDCtxs "descriptor context"
+  _showHashedList "$1" deplDStubs "descriptor stubs" norm_path
 
   local c="${deplComps[$1]}"
   if [ -z "$c" ]; then
@@ -75,26 +116,14 @@ showDeployment()
       found "  component: $c ($(norm_path "$p"))"
     fi
 
-    _get_array a "$c" compCtxs || true
-    if [ ${#a[@]} -gt 0 ]; then
-      found "  component context:"
-      for i in "${a[@]}"; do
-        found "  - $i"
-      done
-    fi
+    _showHashedList "$c" compCtxs "component context"
   fi
 
-  _get_array a "$1" deplInfos || true
-  if [ ${#a[@]} -gt 0 ]; then
-    found "  configurations:"
-    for i in "${a[@]}"; do
-      found "  - $(norm_path "$i")"
-    done
-  fi
+  _showHashedList "$1" deplInfos "configurations" norm_path
 
   _get_array a "$1" deplReqs || true
   if [ ${#a[@]} -gt 0 ]; then
-    found "  requires:"
+    title "  requires:"
     for i in "${a[@]}"; do
       p="${deplDefs[$i]}"
       if [ -z "$p" ]; then
@@ -105,21 +134,8 @@ showDeployment()
     done
   fi
 
-  _get_array a "$1" deplCtxs || true
-  if [ ${#a[@]} -gt 0 ]; then
-    found "  context:"
-    for i in "${a[@]}"; do
-      found "  - $i"
-    done
-  fi
-
-  _get_array a "$1" deplStubs || true
-  if [ ${#a[@]} -gt 0 ]; then
-    found "  stubs:"
-    for i in "${a[@]}"; do
-      found "  - $(norm_path "$i")"
-    done
-  fi
+  _showHashedList "$1" deplCtxs "context"
+  _showHashedList "$1" deplStubs "stubs" norm_path
 }
 
 
@@ -130,12 +146,12 @@ showComponent()
   if [ -z "$p" ]; then
     Error "component $1 not found"
   fi
-  found "component $1"
+  confirm "component $1"
   found "  path: $(norm_path "$p")"
   
   _get_array a "$1" compCtxs || true
   if [ ${#a[@]} -gt 0 ]; then
-    found "  context:"
+    title "  context:"
     for i in "${a[@]}"; do
       found "  - $i"
     done
@@ -145,7 +161,7 @@ showComponent()
     local f=
     while IFS='' read -r d; do
       if [ -z "$f" ]; then
-        found "  deployments"
+        title "  deployments"
         f=X
       fi
       found "  - $d ($(norm_path "${deplDefs[$d]}"))"
@@ -392,7 +408,7 @@ if [ ${opts[debug]+set} ]; then
 fi
 
 
-CMDS=( show closure exports manifest script ls prepare plan deploy lib )
+CMDS=( show closure exports manifest script ls prepare plan deploy lib colors )
 cmd="$(resolve_shortcut "$cmd" "${CMDS[@]}")"
 
 execute_command "$cmd" CMD_ "${CMDS[*]}" "$@"

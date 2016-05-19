@@ -123,10 +123,18 @@ get_component_deployments()
 ###########################################################################
 # landscape data
 ###########################################################################
-declare -gA modDefs
-declare -gA deplDefs
-declare -gA deplComps
-
+declare -gA modDefs     # module definition locations
+declare -gA deplDefs    # deployment definition locations
+declare -gA deplComps   # deployment component for deployment
+declare -gA deplActive  # active flag for deployment
+### hashed arrays (datatype provided by lib/data)
+# deplCtxs    # contexts for deployments
+# deplDCtxs   # descriptor contexts for deployments
+# deplStubs   # effective stubs for deployments
+# deplDStubs  # effective descriptor stubs for deployments
+# deplReqs    # imports for deployments
+# deplInfos   # configuration locations for deployments
+ 
 declare -gA compDefs
 
 ###########################################################################
@@ -342,6 +350,24 @@ lookupStub()
   fi
 }
 
+# $1: depl name
+# $2+: name
+lookupStubs()
+{
+  local c
+  stubs=( )
+  for c in "${@:2}"; do
+    debug " using context $c"
+    _get_list < <(lookupStub "$1" "$c")
+    if [ "${#res[@]}" -eq 0 ]; then
+      warn "context $c not found for $1"
+    else
+      debug "   found" $(norm_path "${res[@]}")
+      stubs+=( "${res[@]}" )
+    fi
+  done
+}
+
 scan()
 {
   _scanModule "$@"
@@ -408,12 +434,10 @@ _scanDeployments()
       if [ -f "$1/$FILE_DEPLOYMENT" ]; then
         log warn " ignoring duplicate deployment defintion $2 at $(norm_path "$1")"
       else
-        log warn " ignoring duplicate deployment info $2 at $(norm_path "$1")"
+        log warn " ignoring duplicate deployment config $2 at $(norm_path "$1")"
       fi
     else
-      local a=( )
-      _get_array a "$2" deplInfos || true
-      _set_array "$2" deplInfos "$1" "${a[@]}"
+      _depls["$2"]="$1"
       if [ -f "$1/$FILE_DEPLOYMENT" ]; then
         debug " found deployment definition $2 at $(norm_path "$1")"
         deplDefs["$2"]="$1"
@@ -466,6 +490,7 @@ _scanModule()
   if [ -d "$1/$DIR_COMPONENTS" ]; then
     _scanComponents $p "$1/$DIR_COMPONENTS" "" "$2"
   fi
+  declare -A _depls
   if [ -d "$1/$DIR_DEPLOYMENTS" ]; then
     _scanDeployments $p "$1/$DIR_DEPLOYMENTS" "" "$2"
   fi
@@ -479,6 +504,15 @@ _scanModule()
       fi
     done
   fi
+  local a=( )
+  for i in "${!_depls[@]}"; do
+    if [ ${deplDefs[$i]:+set} ]; then
+      _get_array a "$i" deplInfos || true
+      _set_array "$i" deplInfos "${a[@]}" "${_depls[$i]}"
+    else
+      log warn "no deployment definition for configuration $i found in $1"
+    fi
+  done
 }
 
 
@@ -520,8 +554,27 @@ setupComponent()
 setupDeployment()
 {
   local ctxs=( )
+  local stubs=( )
   local root="${deplDefs["$1"]}"
+
+  debug " analyse descriptor..."
   local def="$(cat "$root/$FILE_DEPLOYMENT")"
+  _get_yaml_list '.["descriptor-context"][]' <<<"$def"
+  debug "found descriptor context: ${res[@]}"
+  _set_array "$1" deplDCtxs "${res[@]}"
+  if [ ${#res[@]} -gt 0 ]; then
+    lookupStubs "$1"  "${res[@]}"
+    _set_array "$1" deplDStubs "${stubs[@]}"
+    if [ ${#stubs[@]} -gt 0 ]; then
+      if [ -n "${opts[spiff]+x}" ]; then
+        log info spiff merge "$root/$FILE_DEPLOYMENT" "${stubs[@]}"
+      fi
+      def="$(spiff merge - "${stubs[@]}" <<<"$def" || Error "descriptor processing for $1 failed")"
+    fi
+  else
+    _set_array "$1" deplDStubs
+  fi
+
   local comp="$(get_yaml_field - .component <<<"$def")"
   if [ -z "$comp" ]; then
     log warn " no component defined for deployment $1"
@@ -537,6 +590,13 @@ setupDeployment()
   fi
   deplComps[$1]="$comp"
 
+  local active="$(get_yaml_field - .active <<<"$def")"
+  if [ -z "$active" -o "$active" == true ]; then
+    active=X
+  else 
+    active=
+  fi
+  deplActive[$1]="$active"
 
   debug " analyse imports..."
   local res=( )
@@ -552,19 +612,8 @@ setupDeployment()
   set_array res uniq "${ctxs[@]}" "${res[@]}"
   debug " effective context ${res[@]}"
 
-  local c
-  local s=( )
-  for c in "${res[@]}"; do
-    debug " using context $c"
-    _get_list < <(lookupStub "$1" "$c")
-    if [ "${#res[@]}" -eq 0 ]; then
-      warn "context $c not found for $1"
-    else
-      debug "   found" $(norm_path "${res[@]}")
-      s+=( "${res[@]}" )
-    fi
-  done
-  _set_array "$1" deplStubs "${s[@]}"
+  lookupStubs "$1"  "${res[@]}"
+  _set_array "$1" deplStubs "${stubs[@]}"
 }
 
 setupEnv()
@@ -680,6 +729,9 @@ _generate()
 
   t="$(require_deployment "$1")"
 
+  if [ ! ${deplActive[$1]:+set} ]; then
+    Error "deployment $1 is inactive"
+  fi
   mkdir -p "$2/$1"
   {
     echo "imports:"
