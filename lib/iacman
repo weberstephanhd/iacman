@@ -5,8 +5,10 @@
 ###########################################################################
 ###########################################################################
 
-TOOLSET_LIB=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
-source "$TOOLSET_LIB/modmgmt"
+IAC_LIB="$(dirname $(readlink -f ${BASH_SOURCE[0]}))"
+IAC_BASE="$(dirname "$IAC_LIB")"
+IAC_PLUGINS="$IAC_BASE/plugins"
+source "$IAC_LIB/modmgmt"
 
 set -o pipefail
 
@@ -60,6 +62,31 @@ uniq()
       a+=( "$e" )
     fi
   done
+}
+
+p_land()
+{
+  color_green "$@"
+}
+p_mod()
+{
+  color_red "$@"
+}
+p_comp()
+{
+  color_magenta "$@"
+}
+p_depldef()
+{
+  color_blue "$@"
+}
+p_deplcfg()
+{
+  color_cyan "$@"
+}
+p_cfg()
+{
+  color_dark "$@"
 }
 
 ###########################################################################
@@ -135,28 +162,29 @@ declare -gA deplActive  # active flag for deployment
 # deplReqs    # imports for deployments
 # deplInfos   # configuration locations for deployments
  
-declare -gA compDefs
+declare -gA compDefs    # component definitions
+declare -gA compTypes   # component type
+declare -gA compMFs     # component manifest
 
 ###########################################################################
 # component API
 ###########################################################################
 
-DIR_SCRIPTS=scripts
-SCRIPT_CREATE_EXPORTS=$DIR_SCRIPTS/create_exports
-SCRIPT_CREATE_MANIFEST=$DIR_SCRIPTS/create_manifest
+DIR_ACTIONS=actions
+ACTION_CREATE_EXPORTS=create_exports
+ACTION_CREATE_MANIFEST=create_manifest
 
 # $1: name
 # $2: ctx
-SCRIPT_create_exports()
+ACTION_create_exports()
 {
-  local inst="$(get_instance_dir "$1")"
-  local s="$(get_script "$1" $SCRIPT_CREATE_EXPORTS)"
+  local s="$(get_action "$1" $ACTION_CREATE_EXPORTS)"
   if [ -n "$s"  ]; then
-    "$s" "-d" "$inst" "$2" 
+     _execute_action "$1" "$s" "$2"
   else
-    s="$(get_script "$1" $SCRIPT_CREATE_MANIFEST)"
+    s="$(get_action "$1" $ACTION_CREATE_MANIFEST)"
     if [ -n "$s"  ]; then
-      "$s" "-d" "$inst" "$2"
+      _execute_action "$1" "$s" "$2"
     else
       cat "$2"
     fi | yaml2json | jq .exports | spiff merge -
@@ -165,14 +193,48 @@ SCRIPT_create_exports()
 
 # $1: name
 # $2: ctx
-SCRIPT_create_manifest()
+ACTION_create_manifest()
 {
-  local s="$(get_script "$1" $SCRIPT_CREATE_MANIFEST)"
+  local s="$(get_action "$1" $ACTION_CREATE_MANIFEST)"
   if [ -n "$s"  ]; then
-    "$s" "$2"
+    _execute_action "$1" "$s" "$2"
   else
     cat "$2"
   fi
+}
+
+########################
+# action execution
+
+# $1: deployment name
+# $2: action name
+# args
+execute_action()
+{
+  local p="$(get_action "$1" "$2")"
+  if [ -z "$p" ]; then
+    Error "${ERRCTX}${ERRCTX:+: }action '$2' not found for '$1'"
+  fi
+  _execute_action "$1" "$p" "${@:3}"
+}
+
+_execute_action()
+{
+  local inst="$(get_instance_dir "$1")"
+  local gen="$(get_instance_gen_dir "$1")"
+  local state="$(get_state_dir "$1")"
+  (
+    export IAC_DEPL_STATE="$state"
+    export IAC_DEPL_INST="$inst"
+    export IAC_DEPL_GEN="$gen"
+    export IAC_DEPL_NAME="$1"
+    export IAC_DEPL_COMP_NAME="${deplComps[$1]}"
+    export IAC_DEPL_COMP="${compDefs[$IAC_DEPL_COMP_NAME]}"
+    export IAC_LS_ROOT="$LROOT"
+    mkdir -p "$state"
+    debug execute: "$2" "${@:3}"
+    "$2" "${@:3}"
+  )
 }
 
 ###########################################################################
@@ -227,18 +289,29 @@ get_stubs()
 }
 
 # $1: name
-# $2: script
-get_script()
+# $2: action
+get_action()
 {
   local d="$(get_deployment "$1")"
   local c="$(get_deployment_component "$1")"
+  local r="$DIR_ACTIONS/$2"
+  local t="${compTypes[${deplComps[$1]}]}"
 
-  _filter_file "$d/$2" -e || _filter_file "$c/$2" || true
+  _filter_file "$d/$r" -e || _filter_file "$c/$r" -e || _filter_file "$IAC_PLUGINS/$t/$r" || true
 }
 
 get_instance_dir()
 {
-  echo "$LROOT/$DIR_DEPLOYMENTS/$1"
+  local d="$LROOT/$DIR_DEPLOYMENTS/$1"
+  mkdir -p "$d"
+  echo "$d"
+}
+
+get_state_dir()
+{
+  local d="$LROOT/$DIR_STATE/$1"
+  mkdir -p "$d"
+  echo "$d"
 }
 
 get_instance_gen_dir()
@@ -246,9 +319,19 @@ get_instance_gen_dir()
   echo "$(get_instance_dir "$1")/gen"
 }
 
+get_component_dir()
+{
+  local c="${deplComps[$1]}"
+  if [ -n "$c" ]; then
+    echo "${compDefs[$c]}"
+  fi
+}
+
 ###########################################################################
 # model
 ###########################################################################
+DIR_STATE=state
+
 DIR_DEPLOYMENTS=deployments
 DIR_MODULES=modules
 DIR_COMPONENTS=components
@@ -256,9 +339,6 @@ DIR_CONFIG=config
 
 FILE_COMPONENT=component.yml
 FILE_DEPLOYMENT=deployment.yml
-
-SCRIPT_MANIFEST=scripts/create_manifest
-SCRIPT_EXPORTS=scripts/create_manifest
 
 GEN_EXP=exp.yml
 GEN_IMP=imp.yml
@@ -302,11 +382,13 @@ _check_files()
 {
   local i
   for i in "${@}"; do
-    if [ ! -f "$i" -a ! -h "$i" ]; then
-      return 1
+    if [ ! -h "$i" ]; then
+      if [ -f "$i" -o -d "$i" ]; then
+        return 0
+      fi
     fi
   done
-  return 0
+  return 1
 }
 
 # $1: file
@@ -387,7 +469,7 @@ _scanConfigs()
     if [ -d "$i" ]; then
       _scanComponents $p "$i" "$2${2:+/}$(basename "$i")" "$3"
     else
-      found "$3  config $2${2:+/}$(basename "$i")"
+      p_cfg "$3  config $2${2:+/}$(basename "$i")"
     fi
   done
 }
@@ -408,7 +490,7 @@ _scanComponents()
       debug " found component $2 at $(norm_path "$1")"
       compDefs["$2"]="$1"
       if [ -n "$p" ]; then
-        found "$3  component $2"
+        p_comp "$3  component $2"
       fi
     fi
   else
@@ -429,7 +511,7 @@ _scanDeployments()
     shift
   fi
   debug "scanning dir $(norm_path "$1") ($2)"...
-  if [ -n "$2" ] && _check_files "$1/"*.yml; then
+  if [ -n "$2" ] && _check_files "$1/"*.yml "$1/gen" ; then
     if [ ${deplDefs[$2]+set} ]; then
       if [ -f "$1/$FILE_DEPLOYMENT" ]; then
         log warn " ignoring duplicate deployment defintion $2 at $(norm_path "$1")"
@@ -443,13 +525,13 @@ _scanDeployments()
         deplDefs["$2"]="$1"
 
         if [ -n "$p" ]; then
-          found "$3  deployment definition $2"
+          p_depldef "$3  deployment definition $2"
         fi
 
       else
         debug " found deployment info $2 at $(norm_path "$1")"
         if [ -n "$p" ]; then
-          found "$3  deployment config for $2"
+          p_deplcfg "$3  deployment config for $2"
         fi
       fi
     fi
@@ -474,11 +556,11 @@ _scanModule()
   debug scanning module "$(norm_path "$1")"...
   if [ "$(basename "$(dirname "$1")")" != $DIR_MODULES ]; then
     if [ -n "$p" ]; then
-      found "$2landscape"
+      p_land "$2landscape"
     fi
   else
     if [ -n "$p" ]; then
-      found "$2module $m"
+      p_mod "$2module $m"
     fi
     if [ ${modDefs[$m]+set} ]; then
       log warn "duplicate module $m at $(norm_path "$1")"
@@ -545,7 +627,22 @@ setupComponent()
     _get_yaml_list '.context[]' <<<"$def"
     debug " context ${res[@]}"
     _set_array "$1" compCtxs "${res[@]}"
+
+    local type="$(get_yaml_field - .type <<<"$def")"
+    if [ -z "$type" ]; then
+      compTypes[$1]=generic
+    else
+      compTypes[$1]="$type"
+    fi
+    local manifest="$(get_yaml_field - .manifest <<<"$def")"
+    if [ -z "$manifest" ]; then
+      compMFs[$1]="$GEN_MANIFEST"
+    else
+      compMFs[$1]="$manifest"
+    fi
   else
+      compTypes[$1]=generic
+    compMFs[$1]="$GEN_MANIFEST"
     _set_array "$1" compCtxs
   fi
 }
@@ -637,7 +734,7 @@ setupEnv()
   while [ -z "$MROOT" -a "$d" != "/" ]; do
     n="$(basename "$d")"
     p="$(dirname "$d")"
-    if _check_files "$d"/*.yml; then
+    if _check_files "$d"/*.yml "$d/gen"; then
       r="$d"
       names=( )
     fi
@@ -720,7 +817,7 @@ _map_name()
 
 # $1: name
 # $2: gen dir
-_generate()
+_generate_context()
 {
   local i
   local a
@@ -751,12 +848,20 @@ _generate()
   local stubs=( )
   get_stubs stubs "$1"
 
-  local ctx=$2/$1/$GEN_CTX
+  local ctx="$2/$1/$GEN_CTX"
   if [ -n "${opts[spiff]+x}" ]; then
     log info spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" 
   fi
   spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" >"$ctx"
-  SCRIPT_create_exports "$1" "$ctx" >"$2/$1/$GEN_EXP"
+}
+
+# $1: name
+# $2: gen dir
+_generate_exports()
+{
+  _generate_context "$@"
+  local ctx="$2/$1/$GEN_CTX"
+  ACTION_create_exports "$1" "$ctx" >"$2/$1/$GEN_EXP"
   log confirm "    exp: $(md5sum "$2/$1/$GEN_EXP")"
 }
 
@@ -839,18 +944,45 @@ _generate_list()
     log info "  generate $i"
     if [ -f "$1/$i/$GEN_EXP" ]; then
       old="$(cat "$1/$i/$GEN_EXP")"
-      _generate $i "$1"
+      _generate_exports $i "$1"
       if [ "$old" != "$(cat "$1/$i/$GEN_EXP")" ]; then
         log hint "    $i has changed -> regenerate cycle"
         mod=X
       fi
     else
-      _generate $i "$1"
+      _generate_exports $i "$1"
     fi
   done
 }
 
 declare -A temp
+
+# $1: name
+# $2; dir
+generate_context()
+{
+  local imps=( )
+  if ! _closure imps "$1"; then
+    list_array __missing dumpargs_err
+    return 1
+  fi
+  log info "imports for $1: ${imps[@]}"
+  _generate_list "$2" "${imps[@]}"
+  if has_cycle "$1"; then
+    log hint "  cycle detected"
+    local mod=X
+    while [ -n "$mod" ]; do
+      log info "regenerate cycle"
+      _generate_list "$2" "${imps[@]}"
+    done
+  else
+    log info "generating context for $1"
+    _generate_context "$@"
+  fi
+  local gen="$(get_instance_gen_dir "$1")"
+  mkdir -p "$gen"
+  mv "$2/$1"/* "$gen"
+}
 
 # $1: name
 # $2; dir
@@ -861,8 +993,8 @@ generate_exports()
     list_array __missing dumpargs_err
     return 1
   fi
-  log info "target $1: ${imps[@]}"
-  if ! contains $1 "${imps[@]}"; then
+  log info "exports for $1: ${imps[@]}"
+  if ! contains "$1" "${imps[@]}"; then
     imps+=( "$1" )
   fi
   _generate_list "$2" "${imps[@]}"
@@ -881,8 +1013,8 @@ generate_exports()
 
 generate_manifest()
 {
-  generate_exports "$@"
-  log info generating manifest
+  generate_context "$@"
+  log info "generating manifest for $1 (${compMFs[${deplComps[$1]}]})"
   local gen="$(get_instance_gen_dir "$1")"
-  SCRIPT_create_manifest "$1" "$gen/$GEN_CTX" > "$gen/$GEN_MANIFEST"
+  ACTION_create_manifest "$1" "$gen/$GEN_CTX" > "$gen/${compMFs[${deplComps[$1]}]}"
 }

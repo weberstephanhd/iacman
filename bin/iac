@@ -22,6 +22,86 @@ CMD_colors()
 }
 
 ########################
+# directories
+CMD_directory()
+{
+  QUIET=X
+  setupEnv
+
+  if [ -z "$1" ]; then
+    echo "$LROOT"
+  else
+    local n
+    local type="$(resolve_shortcut "$1" landscape deployment component module config)"
+    case "$type" in
+      deployment)
+        cacheAll
+        n="$(require_deplname "$DNAME")"
+        echo "${deplDefs[$n]}";;
+      component)
+        if [ -n "$CROOT" ]; then
+          echo "$CROOT"
+        else
+          cacheAll
+          n="$(require_deplname "$DNAME")"
+          get_component_dir "$n"
+        fi;;
+      module) echo "$MROOT";;
+      landscape) echo "$LROOT";;
+      config)
+        cacheAll
+        n="$(require_deplname "$DNAME")"
+        if [ -z "$n" ]; then
+          Error "no deployment found"
+        fi
+        get_instance_dir "$n";;
+      *) Error "invalid directory name '$1'";;
+    esac
+  fi
+}
+
+########################
+# call editor
+
+# $1: file
+# $2: dir
+check_file_in_dir()
+{
+  (
+    cd "$2"
+    [ -f "$1" ]
+  )
+}
+
+CMD_vi()
+{
+  setupEnv
+  cacheAll
+
+  local t
+  local n
+  local i
+  local c
+  n="$(require_deplname)"
+  t="$(require_deployment "$n")"
+  i="$(get_instance_dir "$n")"
+  c="$(get_component_dir "$n")"
+
+  if [ -n "$1" ]; then
+    if check_file_in_dir "$1" "$i"; then
+      cd "$i"
+      exec vi "$1"
+    fi
+    if check_file_in_dir "$1" "$c"; then
+      cd "$c"
+      exec vi "$1"
+    fi
+  fi
+  cd "$i"
+  exec vi "$@"
+}
+
+########################
 # lib
 CMD_lib()
 {
@@ -92,10 +172,14 @@ showDeployment()
   if [ -z "$p" ]; then
     Error "deployment $1 not found"
   fi
-  if [ -f "$p/$FILE_DEPLOYMENT" ]; then
-    confirm "deployment definition $1"
+  if [ -n "$2" ]; then
+    if [ -f "$2/$FILE_DEPLOYMENT" ]; then
+      confirm "deployment definition $1"
+    else
+      confirm "deployment configuration $1"
+    fi
   else
-    confirm "deployment configuration $1"
+    confirm "deployment definition $1"
   fi
   found "  path: $(norm_path "$p")"
   if [ ! ${deplActive[$1]:+set} ]; then
@@ -148,6 +232,8 @@ showComponent()
   fi
   confirm "component $1"
   found "  path: $(norm_path "$p")"
+  found "  type: ${compTypes[$1]}"
+  found "  manifest: ${compMFs[$1]}"
   
   _get_array a "$1" compCtxs || true
   if [ ${#a[@]} -gt 0 ]; then
@@ -175,12 +261,17 @@ showModule()
   if [ -z "$p" ]; then
     Error "module $1 not found"
   fi
+  listModule "$p"
+}
+
+listModule()
+{
   (
-    declare -A modDefs
-    declare -A deplDefs
-    declare -A compDefs
-    #found "module $1"
-    #found "  path: $(norm_path "$p")"
+    declare -A modDefs     # module definition locations
+    declare -A deplDefs    # deployment definition locations
+    declare -A deplComps   # deployment component for deployment
+    declare -A deplActive  # active flag for deployment
+    declare -A compDefs   # component defintions
     scan -p "$p"
   )
 }
@@ -195,7 +286,7 @@ CMD_show()
       showComponent "$CNAME"
     fi
     if [ -n "$DROOT" ]; then
-      showDeployment "$DNAME"
+      showDeployment "$DNAME" "$DROOT"
     fi
     if [ -z "$CROOT" -a -z "$DROOT" -a -n "$MROOT" ]; then
       if [ -z "$MNAME" ]; then
@@ -203,7 +294,7 @@ CMD_show()
       else
         found "module $MNAME"
       fi
-      scan -p "$MROOT"
+      listModule "$MROOT"
     fi
   else
     if [ $# -eq 2 ]; then
@@ -262,6 +353,23 @@ CMD_closure()
 }
 
 ########################
+# generate context
+
+CMD_context()
+{
+  setupEnv
+  cacheAll
+
+  local t
+  local n
+  n="$(require_deplname "$1")"
+  t="$(require_deployment "$n")"
+  mkdir -p "$TMP"
+  log info "generating context for $n"
+  generate_context "$n" "$TMP"
+}
+
+########################
 # generate exports
 
 CMD_exports()
@@ -296,48 +404,47 @@ CMD_manifest()
 }
 
 ########################
-# script execution
+# action execution
 
-exec_script()
+exec_action()
 {
   setupEnv
   cacheAll
 
-  local t
   local n
-  local s="$1"
-  shift
+  local t
   n="$(deplname_from_args)"
   t="$(require_deployment "$n")"
-  local p="$(get_script "$n" "$DIR_SCRIPTS/$s")"
-  if [ -z "$p" ]; then
-    Error "${ERRCTX}${ERRCTX:+: }script '$s' not found for '$n'"
+  if [ $# -eq 1 ]; then
+    local gen="$(get_instance_gen_dir "$n")"
+    generate_context "$n" "$TMP"
+    execute_action "$n" "$1" "$gen/$GEN_CTX"
+  else
+    execute_action "$n" "$@"
   fi
-  local inst="$(get_instance_dir "$n")"
-  "$p" -d "$inst" "$@"
 }
 
-CMD_script()
+CMD_action()
 {
   if [ $# -lt 1 ]; then
-    Error "${ERRCTX}${ERRCTX:+: }script name missing"
+    Error "${ERRCTX}${ERRCTX:+: }action name missing"
   fi
-  exec_script "$@"
+  exec_action "$@"
 }
 
 CMD_prepare()
 {
-  exec_script prepare "$@"
+  exec_action prepare "$@"
 }
 
 CMD_plan()
 {
-  exec_script plan "$@"
+  exec_action plan "$@"
 }
 
 CMD_deploy()
 {
-  exec_script deploy "$@"
+  exec_action deploy "$@"
 }
 
 ###########################################################################
@@ -369,22 +476,26 @@ if [ -z "$cmd" -o "$cmd" == help -o "$cmd" == "--help" -o "$cmd" == "-help" ]; t
   found
   found "Commands:"
   found "  ls [<dir>]                                  list landscape/module structure"
+  found "  directory [deployment|component|module|landscape|config"]
+  found "                                              show dedicted derived directory"
+  found "                                              based on current working directory"
   found "  show [[component|deployment|module] <name>] details for dedicated element"
   found "  closure [<name>]                            dependency closure"
+  found "  context                                     generate context"
   found 
-  found "Handle scripts provided by component for deployments:"
-  found "  script <name>  <args>         execute arbitrary script for deployment"
-  found "  prepare                       execute prepare script"
+  found "Handle actions provided by component for deployments:"
+  found "  action <name>  <args>         execute arbitrary action for deployment"
+  found "  prepare                       execute prepare action"
   found "  manifest                      generate manifest"
   info  "                                context provided by iac and passed as argument"
-  info  "                                this script is defaulted by using"
+  info  "                                this action is defaulted by using"
   info  "                                the context as manifest."
   found "  exports                       generate exports"
   info  "                                context provided by iac and passed as argument"
-  info  "                                this script is defaulted by generating"
+  info  "                                this action is defaulted by generating"
   info  "                                the manifest and reading the exports section."
-  found "  plan                          execute plan script"
-  found "  deploy                        execute deploy script"
+  found "  deploy                        execute deploy action"
+  found "  plan                          execute plan action"
   exit 0
 fi
 
@@ -398,7 +509,7 @@ OPT_parse_options params opts "$@"
 shift $(( _cnt - 1 ))
 
 #
-# support boshman based scripts by providing path to source boshman
+# support boshman based actions by providing path to source boshman
 #
 if [ ${opts[quiet]+set} ]; then
   QUIET=X
@@ -408,7 +519,7 @@ if [ ${opts[debug]+set} ]; then
 fi
 
 
-CMDS=( show closure exports manifest script ls prepare plan deploy lib colors )
+CMDS=( show closure context exports manifest action ls prepare plan deploy lib vi directory colors )
 cmd="$(resolve_shortcut "$cmd" "${CMDS[@]}")"
 
 execute_command "$cmd" CMD_ "${CMDS[*]}" "$@"

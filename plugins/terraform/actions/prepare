@@ -1,0 +1,196 @@
+#!/bin/bash -e
+
+################################################################################
+# IAC plugin to handle terraform deployments
+#
+# - terraform state is maintained in the state location for the deployment
+# - the manifest is the terraform.tfvars file used to control the deployment
+#   described by the terraform files contained in the component directory
+# - the terraform module cache is independent of the actual deployment and
+#   stored in the .terraform folder of the component. This folder must be
+#   added to .gitignore.
+# - the plugin provides additional actions for *plan* and general terrform
+#   commands. If required by the sub commands the arguments are automatically 
+#   enriched by options required to setup the file locations described above.
+# - the prepare action is propagated to an option script *helper/setup.sh"
+#   there is no standard functionality for the prepare step.
+#   it is intended, for example, to generate certificates and/or keys
+#   required by the terraform files. They should be stored in the 
+#   config folder.
+# - the exports are extracted from the state file by spiffing the state file
+#   with *helper/export.yml* and *helper/mapping.yml*.
+#   * export.yml   finally selecting yaml field to be part of the result
+#   * mapping.yml  mapping of the outputs of the state file to the export
+#                  structure.
+################################################################################
+
+SCRIPT_BASE="${SCRIPT_BASE:-$(dirname "${BASH_SOURCE[0]}")}"
+
+WSROOT="${IAC_DEPL_COMP}"
+WSROOT="${WSROOT:-$(iac dir comp)}"
+WSROOT="${WSROOT:-$SCRIPT_BASE/..}"
+
+LSROOT="${IAC_LS_ROOT:-$(iac dir)}"
+
+CONFIG_DIR="${IAC_DEPL_INST:-$WSROOT}"
+STATE_DIR="${IAC_DEPL_STATE:-$WSROOT}"
+COMP_DIR="${IAC_DEPL_COMP:-$WSROOT}"
+WORK_DIR="${IAC_DEPL_GEN:-$WSROOT}"
+
+GEN_DIR="$CONFIG_DIR/gen"
+
+CMD="$(basename "$0")"
+
+set -o pipefail
+
+Error()
+{
+  echo "Error: $*" 2>&1
+  exit 1
+}
+
+
+#########################################
+# prepare
+#########################################
+
+do_prepare()
+{
+  LSNAME="$(yaml2json <"$1" | jq -r ".config.landscape_name")"
+  if [ -e "$COMP_DIR/helper/setup.sh" ]; then
+    "$COMP_DIR/helper/setup.sh" "$LSNAME" >/dev/null
+  fi
+}
+
+#########################################
+# create manifest
+#########################################
+
+do_manifest()
+{
+  prepare_variables "$@"
+}
+
+prepare_variables()
+{
+  {
+    local config="$(yaml2json <"$1")"
+    jq -r ".config|keys|.[]" <<<"$config" | {
+      while read k; do
+        local v="$(jq '.config."'$k'"' <<<"$config" )"
+        case "$v" in
+          false|\"false\") v=0;;
+          true|\"true\")  v=1;;
+        esac
+        props["$k"]="$v"
+        echo "$k = $v"
+      done
+      echo "config_dir = \"$CONFIG_DIR\""
+    }
+  }
+}
+
+#########################################
+# deploy
+#########################################
+
+do_deploy()
+{
+  do_manifest "$1" >"$GEN_DIR/terraform.tfvars"
+  shift
+  tf get >"$GEN_DIR/.getlog"
+  tf apply "$@"
+}
+
+#########################################
+# export
+#########################################
+
+_export()
+{
+  spiff merge "$COMP_DIR/helper/export.yml" "$COMP_DIR/helper/mapping.yml" "$STATE_DIR/terraform.tfstate"
+}
+
+do_export()
+{
+  if [ ! -f "$STATE_DIR/terraform.tfstate" ]; then
+    Error "no state file found, please deploy first"
+  fi
+  _export
+}
+
+#########################################
+# plan
+#########################################
+
+do_plan()
+{
+  do_manifest "$1" >"$GEN_DIR/terraform.tfvars"
+  shift
+  tf get >"$GEN_DIR/.getlog"
+  tf plan "$@"
+}
+
+#########################################
+# terraform
+#########################################
+
+tf()
+{
+  local args=( )
+  local dir
+  case "$1" in
+    plan|apply|destroy|refresh)
+      args+=( -state="$IAC_DEPL_STATE/terraform.tfstate" )
+      args+=( -var-file="$IAC_DEPL_GEN/terraform.tfvars" )
+      dir="$IAC_DEPL_COMP";;
+
+    output|taint)
+      args+=( -state="$IAC_DEPL_STATE/terraform.tfstate" );;
+
+    get)
+      dir="$IAC_DEPL_COMP";;
+
+    show|version) ;;
+
+    graph|init) 
+      Error command not supported;;
+
+    *)
+      Error "unknown command $1"
+  esac
+
+  cd "$IAC_DEPL_GEN"
+  if [ -n "$dir" ]; then
+    echo terraform "$1" "${args[@]}" "${@:2}" "$dir"
+    terraform "$1" "${args[@]}" "${@:2}" "$dir"
+  else
+    echo terraform "$1" "${args[@]}" "${@:2}" 
+    terraform "$1" "${args[@]}" "${@:2}" 
+  fi
+}
+
+#########################################
+# main
+#########################################
+
+if [ "$CMD" == "tf" ]; then
+  CMD="$1"
+  shift
+fi
+
+echo "--> action $CMD $@" >&2
+case "$CMD" in
+
+  prepare)         do_prepare "$@";;
+  create_manifest) do_manifest "$@";;
+  deploy)          do_deploy "$@";;
+  create_exports)  do_export "$@";;
+  plan)            do_plan "$@";;
+  *) (
+       tf "$CMD" "$@"
+     )
+
+esac
+
+

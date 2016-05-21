@@ -813,6 +813,12 @@ resolve_shortcut()
         return 0
       fi
     done
+    for c in "${@:2}"; do
+      if [[ "$c" =~ .*$(sed -e 's/\(.\)/\1.*/g'<<<"$1") ]];  then
+        echo "$c"
+        return 0
+      fi
+    done
   fi
   echo "$1"
 }
