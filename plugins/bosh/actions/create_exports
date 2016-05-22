@@ -1,0 +1,13 @@
+#!/bin/bash -e
+
+ACTION_create_exports()
+{
+  if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then
+    "$IAC_ACTION_CREATE_MANIFEST" "$@"
+  else
+    cat "$1"
+  fi | yaml2json | jq .exports | spiff merge -
+}
+
+
+create_exports "$@"

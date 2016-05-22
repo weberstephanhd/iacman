@@ -415,13 +415,9 @@ exec_action()
   local t
   n="$(deplname_from_args)"
   t="$(require_deployment "$n")"
-  if [ $# -eq 1 ]; then
-    local gen="$(get_instance_gen_dir "$n")"
-    generate_context "$n" "$TMP"
-    execute_action "$n" "$1" "$gen/$GEN_CTX"
-  else
-    execute_action "$n" "$@"
-  fi
+  local gen="$(get_instance_gen_dir "$n")"
+  generate_context "$n" "$TMP"
+  execute_action "$n" "$1" "$gen/$GEN_CTX" "${@:3}"
 }
 
 CMD_action()

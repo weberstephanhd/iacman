@@ -231,6 +231,11 @@ _execute_action()
     export IAC_DEPL_COMP_NAME="${deplComps[$1]}"
     export IAC_DEPL_COMP="${compDefs[$IAC_DEPL_COMP_NAME]}"
     export IAC_LS_ROOT="$LROOT"
+    if [ "$(basename "$2")" == $ACTION_CREATE_MANIFEST ]; then
+      export IAC_ACTION_CREATE_MANIFEST="$2"
+    else
+       export IAC_ACTION_CREATE_MANIFEST="$(get_action "$1" $ACTION_CREATE_MANIFEST)"
+    fi
     mkdir -p "$state"
     debug execute: "$2" "${@:3}"
     "$2" "${@:3}"
@@ -444,7 +449,7 @@ lookupStubs()
     if [ "${#res[@]}" -eq 0 ]; then
       warn "context $c not found for $1"
     else
-      debug "   found" $(norm_path "${res[@]}")
+      debug "   found $(norm_path "${res[@]}")"
       stubs+=( "${res[@]}" )
     fi
   done
@@ -622,18 +627,22 @@ setupComponent()
   local root="${compDefs["$1"]}"
   if [ -f "$root/$FILE_COMPONENT" ]; then
     local def="$(cat "$root/$FILE_COMPONENT")"
-
-    debug " analyse context..."
-    _get_yaml_list '.context[]' <<<"$def"
-    debug " context ${res[@]}"
-    _set_array "$1" compCtxs "${res[@]}"
-
     local type="$(get_yaml_field - .type <<<"$def")"
     if [ -z "$type" ]; then
       compTypes[$1]=generic
     else
       compTypes[$1]="$type"
     fi
+    if [ -f "$IAC_PLUGINS/$type/$FILE_COMPONENT" ]; then
+      debug " merging component descriptor..."
+      def="$(spiff merge -- "$IAC_PLUGINS/$type/$FILE_COMPONENT" - <<<"$def")"
+    fi
+
+    debug " analyse context..."
+    _get_yaml_list '.context[]' <<<"$def"
+    debug " context ${res[@]}"
+    _set_array "$1" compCtxs "${res[@]}"
+
     local manifest="$(get_yaml_field - .manifest <<<"$def")"
     if [ -z "$manifest" ]; then
       compMFs[$1]="$GEN_MANIFEST"

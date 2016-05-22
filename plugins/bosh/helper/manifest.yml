@@ -1,0 +1,8 @@
+
+name: (( merge ))
+director_uuid: (( merge ))
+releases: (( merge ))
+resource_pools: (( merge ))
+disk_pools: (( merge || ~ ))
+networks: (( merge ))
+jobs: (( merge ))

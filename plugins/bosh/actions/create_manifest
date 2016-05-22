@@ -1,0 +1,27 @@
+#!/bin/bash -e
+
+SCRIPT_BASE="${SCRIPT_BASE:-$(dirname "${BASH_SOURCE[0]}")}"
+
+WSROOT="${IAC_DEPL_COMP}"
+WSROOT="${WSROOT:-$(iac dir comp)}"
+
+COMP_DIR="${IAC_DEPL_COMP:-$WSROOT}"
+
+jobs="$(yaml2json <"$1" | jq .jobs)"
+if [ "$jobs" == null ]; then
+  echo "$1: no valid manifest" 2>&1
+fi
+rels="$(yaml2json <"$1" | jq .releases)"
+if [ "$jrels" == null ]; then
+  echo "$1: no valid manifest" 2>&1
+fi
+
+m="$COMP_DIR/helper/manifest.yml"
+if [ ! -f "$m" ]; then
+  m="$SCRIPT_BASE/../helper/manifest.yml"
+fi
+if [ -f "$m" ]; then
+  spiff merge "$m" "$1"
+else
+  cat "$1"
+fi

@@ -188,7 +188,7 @@ case "$CMD" in
   create_exports)  do_export "$@";;
   plan)            do_plan "$@";;
   *) (
-       tf "$CMD" "$@"
+       tf "$CMD" "${@:2}"
      )
 
 esac
