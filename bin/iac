@@ -164,6 +164,23 @@ _showHashedList()
   fi
 }
 
+_showHashedDeplList()
+{
+  local a=( )
+  _get_array a "$1" "$2" || true
+  if [ ${#a[@]} -gt 0 ]; then
+    title "  ${3}:"
+    for i in "${a[@]}"; do
+      p="${deplDefs[$i]}"
+      if [ -z "$p" ]; then
+        warn "  - $i (undefined)"
+      else
+        found "  - $i ($(norm_path "$p"))"
+      fi
+    done
+  fi
+}
+
 showDeployment()
 {
   local i
@@ -205,18 +222,8 @@ showDeployment()
 
   _showHashedList "$1" deplInfos "configurations" norm_path
 
-  _get_array a "$1" deplReqs || true
-  if [ ${#a[@]} -gt 0 ]; then
-    title "  requires:"
-    for i in "${a[@]}"; do
-      p="${deplDefs[$i]}"
-      if [ -z "$p" ]; then
-        warn "  - $i (undefined)"
-      else
-        found "  - $i ($(norm_path "$p"))"
-      fi
-    done
-  fi
+  _showHashedDeplList "$1" deplReqs "requires"
+  _showHashedDeplList "$1" deplGlmps "glimpses"
 
   _showHashedList "$1" deplCtxs "context"
   _showHashedList "$1" deplStubs "stubs" norm_path
@@ -343,8 +350,43 @@ CMD_closure()
   t="$(require_deployment "$n")"
   log info "generating dependency closure for $n"
 
+  if has_cycle required "$n"; then
+    warn "deployment cycle detected"
+  fi
   local a=( )
-  if ! _closure a "$n"; then
+  if ! import_closure a "$n"; then
+    list_array __missing dump_err
+    return 1
+  else
+    list_array a
+  fi
+}
+
+CMD_order()
+{
+  setupEnv
+  cacheAll
+
+  local t
+  local n
+  local a=( )
+  local depls=( )
+
+  if [ $# -eq 0 -o -n "${opts[deployment]+set}" ]; then
+    n="$(require_deplname "$1")"
+    t="$(require_deployment "$n")"
+    log info "generating deployment order for $n"
+
+    if has_cycle required "$n"; then
+      warn "deployment cycle detected"
+    fi
+    depls=( "$n" )
+  else
+    log info "generate deployment order"
+    depls=( )
+  fi
+
+  if ! deploy_order a "${depls[@]}"; then
     list_array __missing dump_err
     return 1
   else
@@ -515,7 +557,7 @@ if [ ${opts[debug]+set} ]; then
 fi
 
 
-CMDS=( show closure context exports manifest action ls prepare plan deploy lib vi directory colors )
+CMDS=( show closure order context exports manifest action ls prepare plan deploy lib vi directory colors )
 cmd="$(resolve_shortcut "$cmd" "${CMDS[@]}")"
 
 execute_command "$cmd" CMD_ "${CMDS[*]}" "$@"

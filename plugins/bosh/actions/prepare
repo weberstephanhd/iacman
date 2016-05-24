@@ -1,0 +1,320 @@
+#!/bin/bash -e
+
+WSROOT="${IAC_DEPL_COMP}"
+WSROOT="${WSROOT:-$(iac dir comp)}"
+WSROOT="${WSROOT:-$SCRIPT_BASE/..}"
+
+LSROOT="${IAC_LS_ROOT:-$(iac dir)}"
+
+CONFIG_DIR="${IAC_DEPL_INST:-$WSROOT}"
+STATE_DIR="${IAC_DEPL_STATE:-$WSROOT}"
+COMP_DIR="${IAC_DEPL_COMP:-$WSROOT}"
+WORK_DIR="${IAC_DEPL_GEN:-$WSROOT}"
+
+GEN_DIR="$CONFIG_DIR/gen"
+
+CMD="$(basename "$0")"
+
+set -o pipefail
+
+source "$(iac lib)/modmgmt"
+
+loadModule stdio
+loadModule utils
+
+fix_stemcell()
+{
+  if [ -z "$IAAS_TYPE" -o "$IAAS_TYPE" == openstack ]; then
+    local id
+    local version="$1"
+    id="$(bosh stemcells 2>/dev/null | _lookup_entry 3 "$version" 4)"
+    if [ -z "$id" ]; then
+      id="$(bosh stemcells 2>/dev/null | _lookup_entry 3 "$version\\*" 4)"
+    fi
+    if [ -z "$id" ]; then
+      Error "stemcell not found"
+    fi
+    info "fixing stemcell"
+    glance --insecure image-update --property hw_rng_model=virtio $id >/dev/null || "echo stemcell could not be patched"
+  fi
+}
+
+###############################
+# blobstore cache
+###############################
+
+check_blob()
+{
+  if [ -n "$BLOBSTORE_URL" ]; then
+    curl -If -k "$BLOBSTORE_URL/$1" >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+upload_blob()
+{
+  if check_blob "$2"; then
+    found "found blob $2"
+  else
+    info "uploading blob cache $2"
+    swift --insecure \
+          --os-auth-url "$BLOBSTORE_AUTH_URL" \
+          --auth-version 3 \
+          --os-project-id "$BLOBSTORE_TENANT_ID" \
+          --os-project-domain-name "$BLOBSTORE_DOMAIN" \
+          --os-user-domain-name "$BLOBSTORE_DOMAIN" \
+          --os-username "$BLOBSTORE_USERNAME" \
+          --os-password "$BLOBSTORE_PASSWORD" \
+        upload --object-name "$2" "$BLOBSTORE_CONTAINER" "$1"
+  fi
+}
+
+download_blob()
+{
+  wget --no-check-certificate -O $1 "$BLOBSTORE_URL/$2" 2>/dev/null
+}
+
+check_blob_access()
+{
+  local config="$(cd $LSROOT; get_root -f .lsblob)"
+  if [ -n "$config" ]; then
+    source "$config/.lsblob"
+    if [ -z "$BLOBSTORE_URL" ]; then
+      Error "no blob store cache URL configured"
+    fi
+  fi
+}
+
+###############################
+# bosh
+###############################
+
+# $1: release
+# $2: version
+bosh_check_release()
+{
+  bosh releases 2> /dev/null | filter_fields 1 2 | {
+    while read r v; do
+      v="${v%%\*}"
+      if [ "$r" == "$1" -a "$v" == "$2" ]; then
+        return 0
+      fi
+    done
+    return 1
+  }
+}
+
+# $1: stemcell
+# $2: version
+bosh_check_stemcell()
+{
+  bosh stemcells 2>/dev/null | lookup_entry "$release" 3 | {
+    while read v; do
+      v="${v%%\*}"
+      if [ "$v" == "$version" ]; then
+        return 0
+      fi
+    done
+    return 1
+  }
+}
+
+###############################
+# deployment handlers
+###############################
+# handlers
+# contract are the variables:
+#   gen
+#   descriptor
+
+# $1+: function call
+_handle_stemcells()
+{
+  local release
+  local version
+  local url
+  while read release; do
+    version="$(jq -r '.stemcells[]|select(.name=="'$release'").version'<<<"$descriptor"| ignore_value null)"
+    url="https://bosh.io/d/stemcells/$release?v=$version"
+    found "Found stemcell $release: $version @ $url"
+    file="$gen/stemcells/$release-$version.tgz"
+    if [ $# -gt 0 ]; then
+      "$@"
+    fi
+  done < <( jq -r ".stemcells|map(.name)[]"<<<"$descriptor")
+  found "actual stemcell version is $version"
+  svers="$version"
+}
+
+# $1+: function call
+_handle_releases()
+{
+  local release
+  local version
+  local ref
+  local url
+  while read release; do
+    version="$(jq -r '.releases[]|select(.name=="'$release'").version'<<<"$descriptor"| ignore_value null)"
+    url="$(jq -r '.releases[]|select(.name=="'$release'").git'<<<"$descriptor" | ignore_value null)"
+    found "Found release $release: $version @ $url"
+    file="$gen/releases/$release-$version.tgz"
+    if [ $# -gt 0 ]; then
+      "$@"
+    fi
+  done < <( jq -r ".releases|map(.name)[]"<<<"$descriptor" )
+}
+
+#
+# $1: manifest file
+# $2+: title
+_prepare_handler()
+{
+  if [ -n "$LSROOT" ]; then
+    gen="$LSROOT/gen"
+  else
+    gen="$WSROOT/gen"
+  fi
+  mkdir -p "$gen/stemcells"
+  mkdir -p "$gen/releases"
+  mkdir -p "$gen/compiled"
+  mkdir -p "$gen/deployments"
+
+  descriptor="$(cat "$1" | yaml2json)"
+  info "${@:2}"
+}
+
+##############
+# prepare deployment
+##############
+
+_prepare_stemcell()
+{
+  if [ ! -f "$file" ]; then
+    if check_blob "stemcells/$(basename "$file")"; then
+      found "found in local blob store"
+      download_blob $file "stemcells/$(basename "$file")"
+    else
+      found "downloading from the internet"
+      wget "$url" -O "$file" 2>/dev/null
+    fi
+  fi
+  if bosh_check_stemcell "$release" "$version"; then
+    found "stemcell version $version already uploaded to bosh"
+  else
+    info "uploading stemcell $release version $version"
+    bosh upload stemcell --skip-if-exists "$file"
+    fix_stemcell $version
+  fi
+}
+
+_check_latest()
+{
+  if [ "$version" == latest ]; then
+    info "version latest not supported for blob store"
+    return 1
+  fi
+}
+
+_prepare_release()
+{
+  (
+    cd "$GEN_DIR"
+    if ! bosh_check_release "$release" "$version"; then
+      file="$gen/compiled/$release-$version-on-$os-stemcell-$svers.tgz"
+      if [ ! -f "$file" ]; then
+        if check_blob "$(compiled_blob_name)"; then
+          found "found in local blob store"
+          download_blob $file "$(compiled_blob_name)"
+        fi
+      fi
+      if [ -f "$file" ]; then
+        info "uploading compiled release for $os version $svers"
+        bosh upload release --skip-if-exists $file
+      else
+        info "no compiled release found"
+
+        file="$gen/releases/$release-$version.tgz"
+        if [ -f "$file" ]; then
+          found "  found release in cache"
+        else
+          if check_blob "$(release_blob_name)"; then
+            found "  found in local blob store"
+            download_blob $file "$(release_blob_name)"
+          else
+            info "release $release $version not found in blob store"
+          fi
+        fi
+        if [ ! -f "$file" ]; then
+          #synced=X
+          #_build_release "$@"
+          if [ -z "$url" ]; then
+            Error "no url for release $release/$version"
+          fi
+          found "downloading from the internet"
+          wget "$url" -O "$file" 2>/dev/null
+        fi
+
+        if [ -f "$file" ]; then
+          info "uploading release"
+          bosh upload release --skip-if-exists $file
+        else
+          info "no prepackged release $release version $version found"
+          return 1
+        fi
+      fi
+    else
+      found "release $release version $version already uploaded to bosh"
+    fi
+  )
+}
+
+
+# $1: manifest file
+prepare_deployment()
+{
+  if [ -z "$(get_root -f .lsblob)" ]; then
+    info "no blobstore configured"
+  else
+    check_blob_access
+  fi
+
+  local gen
+  local descriptor
+  local svers
+  local os=ubuntu-trusty
+  _prepare_handler "$1" "prepare deployment $1"
+
+  if ! _handle_releases _check_latest 3>/dev/null; then
+    info "version latest not supported"
+    return 1
+  fi
+  if ! _handle_stemcells _prepare_stemcell; then
+    return 1
+  fi
+  if ! _handle_releases _prepare_release; then
+    return 1
+  fi
+}
+
+
+###############################
+# main
+###############################
+
+if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then
+  "$IAC_ACTION_CREATE_MANIFEST" "$1" >"$GEN_DIR/manifest.yml"
+else
+  if [ !-f "$GEN_DIR/manifest.yml" ]; then
+    Error "no deployment manifest found"
+  fi
+fi
+
+NAME="$(get_yaml_field "$GEN_DIR/manifest.yml" .name)"
+
+echo "--> action $CMD: $NAME ($GEN_DIR/manifest.yml)"
+case "$CMD" in
+  prepare) prepare_deployment "$GEN_DIR/manifest.yml";;
+  *)       bosh -d "$GEN_DIR/manifest.yml" "$CMD" "${@:2}"
+esac
+

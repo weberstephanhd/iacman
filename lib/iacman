@@ -160,6 +160,7 @@ declare -gA deplActive  # active flag for deployment
 # deplStubs   # effective stubs for deployments
 # deplDStubs  # effective descriptor stubs for deployments
 # deplReqs    # imports for deployments
+# deplGlmps   # preview imports for deployments
 # deplInfos   # configuration locations for deployments
  
 declare -gA compDefs    # component definitions
@@ -284,6 +285,16 @@ check_deployment()
 }
 
 get_imports()
+{
+  _get_array "$1" "$2" deplImps
+}
+
+get_glimpses()
+{
+  _get_array "$1" "$2" deplGlmps
+}
+
+get_required()
 {
   _get_array "$1" "$2" deplReqs
 }
@@ -704,11 +715,25 @@ setupDeployment()
   fi
   deplActive[$1]="$active"
 
-  debug " analyse imports..."
   local res=( )
+  debug " analyse imports..."
   _get_yaml_list '.requires[]' <<<"$def"
   debug " requires ${res[@]}"
   _set_array "$1" deplReqs "${res[@]}"
+
+  local filtered=( )
+  local reqs=( "${res[@]}" )
+  debug " analyse glimpses..."
+  _get_yaml_list '.glimpses[]' <<<"$def"
+  for i in "${res[@]}"; do
+    if ! contains "$i" "${reqs[@]}"; then
+      filtered+=( "$i" )
+      reqs+=( "$i" )
+    fi
+  done
+  debug " glimpses ${filtered[@]}"
+  _set_array "$1" deplGlmps "${filtered[@]}"
+  _set_array "$1" deplImps "${reqs[@]}"
 
   debug " analyse context..."
   _get_yaml_list '.context[]' <<<"$def"
@@ -874,65 +899,98 @@ _generate_exports()
   log confirm "    exp: $(md5sum "$2/$1/$GEN_EXP")"
 }
 
+import_closure()
+{
+  local __omit=X
+  local __req
+  _closure "$@"
+}
+
+deploy_order()
+{
+  local __omit 
+  local __req
+  if [ $# -eq 2 ]; then
+    __req=X
+    _closure "$@"
+  else 
+    _closure "$1" "${!deplDefs[@]}"
+  fi
+}
+
 # $1: array name
 # $2; name
 _closure()
 {
-  local _queue=( "$2" )
-  local _closure=( )
-  local _imps=( )
-  local n
-  local i
-
-   declare -A _required
-  __missing=( )
-
-  while [ ${#_queue[@]} -gt 0 ]; do
-    n="${_queue[0]}"
-    _queue=( "${_queue[@]:1}" )
-    _imps=( )
-    if ! check_deployment "$n"; then
-      __missing+=( "missing '$n' ${_required[$n]}" )
-      debug "missing $n"
-    else
-      get_imports _imps "$n"
-      debug "processing $n: ${_imps[@]}"
-      for i in "${_imps[@]}"; do
-        if ! contains "$i" "${_closure[@]}" "${_queue[@]}"; then
-          _closure+=( "$i" )
-          _queue+=( "$i" )
-          _required["$i"]="required by '$n' ${_required[$n]}"
-        fi
-      done
-    fi
-  done
-  eval "$1=( \"\${_closure[@]}\" )"
-  return ${#__missing[@]}
-}
-
-# $1; name
-closure()
-{
   local __closure=( )
-  _closure __closure "$1"
-  dumpargs "${__closure[@]}"
+  local __stack=( )
+  local __queue=( "${@:2}" )
+
+  declare -A __required
+  __missing=( )
+  while [ ${#__queue[@]} -gt 0 ]; do
+    local next="${__queue[0]}"
+    __queue=( "${__queue[@]:1}" )
+    if ! contains "$next" "${__closure[@]}"; then
+      __closure "$next" $__omit
+      if [ -n "$__req" ]; then
+        __queue=( )
+      fi
+    fi
+    __omit=
+  done
+  eval "$1=( \"\${__closure[@]}\" )"
 }
 
-# $1; name
+# $1: name
+# [$2]: exclude flag
+__closure()
+{
+  local _imps=( )
+  local i
+  if ! check_deployment "$1"; then
+    __missing+=( "missing '$1' ${__required[$n]}" )
+    debug "missing $1"
+  else
+    if [ -z "$2" ]; then
+      __stack=( "$1" "${__stack[@]}" )
+    fi
+    get_required _imps "$1"
+    debug "processing deps $1: ${_imps[@]}"
+    for i in "${_imps[@]}"; do
+      if ! contains "$i" "${__stack[@]}" "${__closure[@]}"; then
+        __required["$i"]="required by '$1' ${__required[$1]}"
+        __closure "$i"
+      fi
+    done
+    get_glimpses _imps "$1"
+    debug "processing glimpses $1: ${_imps[@]}"
+    for i in "${_imps[@]}"; do
+      if ! contains "$i" "${__stack[@]}" "${__closure[@]}" "${__queue[@]}"; then
+        __required["$i"]="glimpsed by '$1' ${__required[$1]}"
+        __queue+=( "$i" )
+      fi
+    done
+    if [ -z "$2" ]; then
+      __closure+=( "$1" )
+      __stack=( "${__stack[@]:1}" )
+    fi
+  fi
+}
+
+# $1; relation
+# $2; name
+# [$3#]: closure
 has_cycle()
 {
-  local queue=$1
-  local closure
-  local n
-  local i
-
-  if contains $@; then
+  if contains "${@:2}"; then
     return 0
   else
+    local i
     local imps=( )
-    get_imports imps "$1"
+    get_$1 imps "$2"
     for i in "${imps[@]}"; do
-      if has_cycle $i $@; then
+      if has_cycle "$1" "$i" "$@"; then
         return 0
       fi
     done
@@ -971,13 +1029,13 @@ declare -A temp
 generate_context()
 {
   local imps=( )
-  if ! _closure imps "$1"; then
+  if ! import_closure imps "$1"; then
     list_array __missing dumpargs_err
     return 1
   fi
-  log info "imports for $1: ${imps[@]}"
+  log info "context for $1: ${imps[@]}"
   _generate_list "$2" "${imps[@]}"
-  if has_cycle "$1"; then
+  if has_cycle imports "$1"; then
     log hint "  cycle detected"
     local mod=X
     while [ -n "$mod" ]; do
@@ -998,7 +1056,7 @@ generate_context()
 generate_exports()
 {
   local imps=( )
-  if ! _closure imps "$1"; then
+  if ! import_closure imps "$1"; then
     list_array __missing dumpargs_err
     return 1
   fi
@@ -1007,7 +1065,7 @@ generate_exports()
     imps+=( "$1" )
   fi
   _generate_list "$2" "${imps[@]}"
-  if has_cycle "$1"; then
+  if has_cycle imports "$1"; then
     log hint "  cycle detected"
     local mod=X
     while [ -n "$mod" ]; do
