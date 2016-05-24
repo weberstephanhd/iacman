@@ -282,6 +282,7 @@ check_deployment()
   if [ -z "$t" ]; then
     return 1
   fi
+  [ "${deplActive[$1]}" ]
 }
 
 get_imports()
@@ -914,7 +915,15 @@ deploy_order()
     __req=X
     _closure "$@"
   else 
-    _closure "$1" "${!deplDefs[@]}"
+    local _list=( ) 
+    local d
+    for d in "${!deplDefs[@]}"; do
+      if [ "${deplActive[$d]}" ]; then
+        _list+=( "$d" )
+      fi
+    done
+    info "deployments: ${_list[@]}"
+    _closure "$1" "${_list[@]}"
   fi
 }
 
@@ -949,8 +958,14 @@ __closure()
   local _imps=( )
   local i
   if ! check_deployment "$1"; then
-    __missing+=( "missing '$1' ${__required[$n]}" )
-    debug "missing $1"
+    local m
+    if [ "${deplComp[$1]}" ]; then
+      m="inactive '$1'"
+    else
+      m="missing '$1'"
+    fi
+    __missing+=( "$m ${__required[$n]}" )
+    debug "$m"
   else
     if [ -z "$2" ]; then
       __stack=( "$1" "${__stack[@]}" )

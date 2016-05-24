@@ -10,4 +10,4 @@ ACTION_create_exports()
 }
 
 
-create_exports "$@"
+ACTION_create_exports "$@"

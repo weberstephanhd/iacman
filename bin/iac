@@ -372,7 +372,7 @@ CMD_order()
   local a=( )
   local depls=( )
 
-  if [ $# -eq 0 -o -n "${opts[deployment]+set}" ]; then
+  if [ $# -ne 0 -o -n "${opts[deployment]+set}" ]; then
     n="$(require_deplname "$1")"
     t="$(require_deployment "$n")"
     log info "generating deployment order for $n"

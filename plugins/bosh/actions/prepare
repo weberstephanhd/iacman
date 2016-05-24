@@ -17,7 +17,7 @@ CMD="$(basename "$0")"
 
 set -o pipefail
 
-source "$(iac lib)/modmgmt"
+source "$(dirname "$(iac lib)")/modmgmt"
 
 loadModule stdio
 loadModule utils
