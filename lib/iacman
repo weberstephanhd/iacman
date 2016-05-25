@@ -225,6 +225,7 @@ _execute_action()
   local gen="$(get_instance_gen_dir "$1")"
   local state="$(get_state_dir "$1")"
   (
+    export IAC_QUIET="$QUIET"
     export IAC_DEPL_STATE="$state"
     export IAC_DEPL_INST="$inst"
     export IAC_DEPL_GEN="$gen"
@@ -1057,7 +1058,8 @@ generate_context()
       log info "regenerate cycle"
       _generate_list "$2" "${imps[@]}"
     done
-  else
+  fi
+  if ! contains "$1" "${imps[@]}"; then
     log info "generating context for $1"
     _generate_context "$@"
   fi
