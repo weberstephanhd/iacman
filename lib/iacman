@@ -23,13 +23,17 @@ loadModule opts
 ###########################################################################
 
 QUIET=
-TMP=/tmp/lsman$$
+TMP=/tmp/iacman$$
 trap cleanup 2 ERR EXIT
 
 cleanup()
 {
   #info "cleanup $TMP"
-  rm -Rf $TMP
+  if [ -d "$TMP"  ] && [ ${opts[keep]+set} ]; then
+    confirm "generation data kept in '$TMP'"
+  else
+    rm -Rf $TMP
+  fi
 }
 
 ################
@@ -481,14 +485,22 @@ _scanConfigs()
     p=$1
     shift
   fi
-  debug "scanning dir $(norm_path "$1") ($2)"...
+  local queue=( "$1" )
+  local base="$1"
+  while [ "${#queue[@]}" -gt 0 ]; do
+    local dir="${queue[0]}"
+    local name="${dir#$base}"
+    name="${name##/}"
+    queue=( "${queue[@]:1}" )
 
-  for i in "$1"/*; do
-    if [ -d "$i" ]; then
-      _scanComponents $p "$i" "$2${2:+/}$(basename "$i")" "$3"
-    else
-      p_cfg "$3  config $2${2:+/}$(basename "$i")"
-    fi
+    debug "scanning dir $(norm_path "$dir") ($name)"...
+    for i in "$dir"/*; do
+      if [ -d "$i" ]; then
+        queue+=( "$i" )
+      else
+        p_cfg "$2  config $name${name:+/}$(basename "$i")"
+      fi
+    done
   done
 }
 
@@ -500,24 +512,39 @@ _scanComponents()
     p=$1
     shift
   fi
-  debug "scanning dir $(norm_path "$1") ($2)"...
-  if [ -n "$2" ] && _check_files "$1/"*.yml; then
-    if [ ${compDefs[$2]+set} ]; then
-      log warn " ignoring duplicate component $2 at $(norm_path "$1")"
+  local queue=( "$1" )
+  local base="$1"
+  while [ "${#queue[@]}" -gt 0 ]; do
+    local dir="${queue[0]}"
+    local name="${dir#$base}"
+    name="${name##/}"
+    queue=( "${queue[@]:1}" )
+
+    debug "scanning dir $(norm_path "$dir") ($name)"...
+    if [ -n "$name" ] && _check_files "$dir/"*.yml; then
+      if [ ${compDefs[$name]+set} ]; then
+        log warn " ignoring duplicate component $name at $(norm_path "$dir")"
+      else
+        debug " found component $name at $(norm_path "$dir")"
+        compDefs["$name"]="$dir"
+        if [ -n "$p" ]; then
+          local desc="$dir/$FILE_COMPONENT"
+          if [ -f "$desc" ]; then
+            type="$(readComponentType <"$desc")"
+          else
+            type=generic
+          fi
+          p_comp "$2  component $name ($type)"
+        fi
+      fi
     else
-      debug " found component $2 at $(norm_path "$1")"
-      compDefs["$2"]="$1"
-      if [ -n "$p" ]; then
-        p_comp "$3  component $2"
-      fi
+      for i in "$dir"/*; do
+        if [ -d "$i" ]; then
+          queue+=( "$i" )
+        fi
+      done
     fi
-  else
-    for i in "$1"/*; do
-      if [ -d "$i" ]; then
-        _scanComponents $p "$i" "$2${2:+/}$(basename "$i")" "$3"
-      fi
-    done
-  fi
+  done
 }
 
 _scanDeployments()
@@ -528,38 +555,47 @@ _scanDeployments()
     p=$1
     shift
   fi
-  debug "scanning dir $(norm_path "$1") ($2)"...
-  if [ -n "$2" ] && _check_files "$1/"*.yml "$1/gen" ; then
-    if [ ${deplDefs[$2]+set} ]; then
-      if [ -f "$1/$FILE_DEPLOYMENT" ]; then
-        log warn " ignoring duplicate deployment defintion $2 at $(norm_path "$1")"
+  local queue=( "$1" )
+  local base="$1"
+  while [ "${#queue[@]}" -gt 0 ]; do
+    local dir="${queue[0]}"
+    local name="${dir#$base}"
+    name="${name##/}"
+    queue=( "${queue[@]:1}" )
+
+    debug "scanning dir $(norm_path "$dir") ($name)"...
+    if [ -n "$name" ] && _check_files "$dir/"*.yml "$dir/gen" ; then
+      if [ ${deplDefs[$name]+set} ]; then
+        if [ -f "$dir/$FILE_DEPLOYMENT" ]; then
+          log warn " ignoring duplicate deployment defintion $name at $(norm_path "$dir")"
+        else
+          log warn " ignoring duplicate deployment config $name at $(norm_path "$dir")"
+        fi
       else
-        log warn " ignoring duplicate deployment config $2 at $(norm_path "$1")"
+        _depls["$name"]="$dir"
+        if [ -f "$dir/$FILE_DEPLOYMENT" ]; then
+          debug " found deployment definition $name at $(norm_path "$dir")"
+          deplDefs["$name"]="$dir"
+
+          if [ -n "$p" ]; then
+            p_depldef "$2  deployment definition $name"
+          fi
+
+        else
+          debug " found deployment info $name at $(norm_path "$dir")"
+          if [ -n "$p" ]; then
+            p_deplcfg "$2  deployment config for $name"
+          fi
+        fi
       fi
     else
-      _depls["$2"]="$1"
-      if [ -f "$1/$FILE_DEPLOYMENT" ]; then
-        debug " found deployment definition $2 at $(norm_path "$1")"
-        deplDefs["$2"]="$1"
-
-        if [ -n "$p" ]; then
-          p_depldef "$3  deployment definition $2"
+      for i in "$dir"/*; do
+        if [ -d "$i"  -a "$(basename "$i")" != gen ]; then
+          queue+=( "$i" )
         fi
-
-      else
-        debug " found deployment info $2 at $(norm_path "$1")"
-        if [ -n "$p" ]; then
-          p_deplcfg "$3  deployment config for $2"
-        fi
-      fi
+      done
     fi
-  else
-    for i in "$1"/*; do
-      if [ -d "$i"  -a "$(basename "$i")" != gen ]; then
-        _scanDeployments $p "$i" "$2${2:+/}$(basename "$i")" "$3"
-      fi
-    done
-  fi
+  done
 }
 
 _scanModule()
@@ -588,14 +624,14 @@ _scanModule()
   fi
 
   if [ -d "$1/$DIR_COMPONENTS" ]; then
-    _scanComponents $p "$1/$DIR_COMPONENTS" "" "$2"
+    _scanComponents $p "$1/$DIR_COMPONENTS" "$2"
   fi
   declare -A _depls
   if [ -d "$1/$DIR_DEPLOYMENTS" ]; then
-    _scanDeployments $p "$1/$DIR_DEPLOYMENTS" "" "$2"
+    _scanDeployments $p "$1/$DIR_DEPLOYMENTS" "$2"
   fi
   if [ -n "$p" -a -d "$1/$DIR_CONFIG" ]; then
-    _scanConfigs $p "$1/$DIR_CONFIG" "" "$2"
+    _scanConfigs $p "$1/$DIR_CONFIG" "$2"
   fi
   if [ -d "$1/$DIR_MODULES" ]; then
     for i in "$1/$DIR_MODULES"/*; do
@@ -634,18 +670,24 @@ _get_yaml_list()
   _get_list < <(get_yaml_field - "$1")
 }
 
+readComponentType()
+{
+  local type="$(get_yaml_field - .type)"
+  if [ -z "$type" ]; then
+    echo generic
+  else
+    echo "$type"
+  fi
+}
+
 # $1: depl name
 setupComponent()
 {
   local root="${compDefs["$1"]}"
   if [ -f "$root/$FILE_COMPONENT" ]; then
     local def="$(cat "$root/$FILE_COMPONENT")"
-    local type="$(get_yaml_field - .type <<<"$def")"
-    if [ -z "$type" ]; then
-      compTypes[$1]=generic
-    else
-      compTypes[$1]="$type"
-    fi
+    local type="$(readComponentType <<<"$def")"
+    compTypes[$1]="$type"
     if [ -f "$IAC_PLUGINS/$type/$FILE_COMPONENT" ]; then
       debug " merging component descriptor..."
       def="$(spiff merge -- "$IAC_PLUGINS/$type/$FILE_COMPONENT" - <<<"$def")"
@@ -1040,10 +1082,36 @@ _generate_list()
 
 declare -A temp
 
+# $1: deployment name
+# $2: generation base
+_publish()
+{
+  local gen="$(get_instance_gen_dir "$1")"
+  mkdir -p "$gen"
+  mv "$2/$1"/* "$gen"
+}
+
+
+# $1: deployment name
+# $2: generation base
+# $3: publish function
+_handlePublish()
+{
+  if [ ${opts[all]+set} ]; then
+    local i
+    for i in "${imps[@]}"; do
+      $3 "$i" "$2"
+    done
+  else
+    $3 "$1" "$2"
+  fi
+}
+
 # $1: name
 # $2; dir
 generate_context()
 {
+  local publish="${3:-_publish}"
   local imps=( )
   if ! import_closure imps "$1"; then
     list_array __missing dumpargs_err
@@ -1063,9 +1131,8 @@ generate_context()
     log info "generating context for $1"
     _generate_context "$@"
   fi
-  local gen="$(get_instance_gen_dir "$1")"
-  mkdir -p "$gen"
-  mv "$2/$1"/* "$gen"
+
+  _handlePublish "$1" "$2" $publish
 }
 
 # $1: name
@@ -1090,15 +1157,31 @@ generate_exports()
       _generate_list "$2" "${imps[@]}"
     done
   fi
+
+  _handlePublish "$1" "$2" _publish
+}
+
+#
+# $1: deployment name
+# $2: generation base dir
+#
+_publishManifest()
+{
+  local manifest="${compMFs[${deplComps[$1]}]}"
+  log info "generating manifest for $1 ($manifest)"
   local gen="$(get_instance_gen_dir "$1")"
-  mkdir -p "$gen"
-  mv "$2/$1"/* "$gen"
+  if [ -f "$2/$1/$manifest" ]; then
+    _publish "$@"
+  else
+    _publish "$@"
+    ACTION_create_manifest "$1" "$gen/$GEN_CTX" > "$gen/$manifest"
+  fi
 }
 
 generate_manifest()
 {
-  generate_context "$@"
-  log info "generating manifest for $1 (${compMFs[${deplComps[$1]}]})"
-  local gen="$(get_instance_gen_dir "$1")"
-  ACTION_create_manifest "$1" "$gen/$GEN_CTX" > "$gen/${compMFs[${deplComps[$1]}]}"
+  if [ "$#" -ne 2 ]; then
+    Error "invalid call of 'generate_manifest': too many args ($#)"
+  fi
+  generate_context "$@" _publishManifest
 }

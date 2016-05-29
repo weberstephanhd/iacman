@@ -509,6 +509,8 @@ if [ -z "$cmd" -o "$cmd" == help -o "$cmd" == "--help" -o "$cmd" == "-help" ]; t
   found
   found "Options:"
   found "  -q         quiet"
+  found "  -a         generate for all deployments used"
+  found "  -k         keep temporary generation data"
   found "  -D         debug"
   found "  -d <name>  deployment name"
   found
@@ -542,7 +544,7 @@ fi
 ###########################################################################
 declare -g -A opts
 declare -g -A params
-params=( [q]=quiet [D]=debug [d]="=deployment" )
+params=( [a]=all [k]=keep [q]=quiet [D]=debug [d]="=deployment" )
 OPT_parse_options params opts "$@"
 shift $(( _cnt - 1 ))
 

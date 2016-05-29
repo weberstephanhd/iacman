@@ -20,6 +20,10 @@ m="$COMP_DIR/helper/manifest.yml"
 if [ ! -f "$m" ]; then
   m="$SCRIPT_BASE/../helper/manifest.yml"
 fi
+
+if [ -z "$IAC_QUIET" ]; then
+  echo "--> action create_manifest $1" >&2
+fi
 if [ -f "$m" ]; then
   spiff merge "$m" "$1"
 else

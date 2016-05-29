@@ -312,7 +312,9 @@ fi
 
 NAME="$(get_yaml_field "$GEN_DIR/manifest.yml" .name)"
 
-echo "--> action $CMD: $NAME ($GEN_DIR/manifest.yml)"
+if [ -z "$IAC_QUIET" ]; then
+  echo "--> action $CMD: $NAME ($GEN_DIR/manifest.yml)"
+fi
 case "$CMD" in
   prepare) prepare_deployment "$GEN_DIR/manifest.yml";;
   *)       bosh -d "$GEN_DIR/manifest.yml" "$CMD" "${@:2}"

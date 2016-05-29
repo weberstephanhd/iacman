@@ -179,7 +179,9 @@ if [ "$CMD" == "tf" ]; then
   shift
 fi
 
-echo "--> action $CMD $@" >&2
+if [ -z "$IAC_QUIET" ]; then
+  echo "--> action $CMD $@" >&2
+fi
 case "$CMD" in
 
   prepare)         do_prepare "$@";;

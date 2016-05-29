@@ -1,0 +1,7 @@
+
+imports:
+  a:
+    alice: 24
+    bob: 25
+  b:
+    foo: bar

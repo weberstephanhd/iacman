@@ -1,0 +1,8 @@
+#!/bin/bash -e
+
+PLUGIN="$(dirname "$0")/.."
+
+if [ -z "$IAC_QUIET" ]; then
+  echo "--> action create_exports $1" >&2
+fi
+spiff merge "$PLUGIN/mapping.yml" "$1"

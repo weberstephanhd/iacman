@@ -1,5 +1,7 @@
 #!/bin/bash -e
 
+PLUGIN="$(dirname "$0")/.."
+
 ACTION_create_exports()
 {
   if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then

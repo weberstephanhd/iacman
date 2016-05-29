@@ -1,0 +1,2 @@
+<<: (( merge ))
+manifest: mapping.yml
