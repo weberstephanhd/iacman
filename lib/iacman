@@ -158,6 +158,7 @@ declare -gA modDefs     # module definition locations
 declare -gA deplDefs    # deployment definition locations
 declare -gA deplComps   # deployment component for deployment
 declare -gA deplActive  # active flag for deployment
+declare -gA deplCommon  # commom root dir of component and deployment def
 ### hashed arrays (datatype provided by lib/data)
 # deplCtxs    # contexts for deployments
 # deplDCtxs   # descriptor contexts for deployments
@@ -426,32 +427,88 @@ _filter_file()
   fi
 }
 
+#
+# a stub is search from the component up to (exclusive) the
+# common ancestor of the component and the deployment definition
+# followed by the deployment definition up to the landscape root
+#
 # $1: depl name
 # $2: name
 lookupStub()
 {
   local c="${deplComps[$1]}"
+  local dr="$(_elemRoot "$1" "${deplDefs[$1]}")"
   if [ -n "$c" ]; then
      local d="${compDefs[$c]}"
      if [ -n "$d" ]; then
+        local cr="$(_elemRoot "$c" "$d")"
+        local common="${deplCommon[$1]}"
        _filter_file "$d/templates/$2" || _filter_file "$d/$2" || true
+       _lookupTree "$c" "$2" "$d" "$common" "$DIR_CONFIG"
      fi
   fi
 
-  local d="${deplDefs[$1]}"
-  if [ -n "$d" -a -d "$d" ]; then
-    local t="$(dirname "$1")"
-    while [ "$t" != . ]; do
-      d="$(dirname "$d")"
-      t="$(dirname "$t")"
+  _lookupTree "$1" "$2" "${deplDefs[$1]}" "/" "$DIR_DEPLOYMENTS/$1" "$DIR_CONFIG"
+}
+
+_commonRoot()
+{
+  local parts=( )
+  local t
+  local names=("$@")
+  local name="$1"
+
+  while [ "$name" != "/" ]; do
+    parts+=( "$name" )
+    name="$(dirname "$name")";
+  done
+
+  for prefix in "${parts[@]}" /; do
+    for name in "${names[@]}"; do
+        if [ "${name#$prefix}" = "${name}" ]; then
+           continue 2
+        fi
     done
-    while [ "$d" != "$LROOT" ]; do
+    echo "$prefix"
+    break
+  done
+}
+
+# $1: elem name
+# $2: stub name
+# $3: start dir
+# $4: stop dir
+# $5+ sub dirs
+_lookupTree()
+{
+  local d="$3"
+  local i
+  if [ -n "$d" -a -d "$d" ]; then
+    d="$(_elemRoot "$1" "$d")"
+    while [ "$d" != "$LROOT" -a "$d" != "$4" ]; do
       d="$(dirname "$(dirname "$d")")"
-      debug "lookup in $(norm_path "$d")"
-      _filter_file "$d/$DIR_DEPLOYMENTS/$1/$2" || true
-      _filter_file "$d/$DIR_CONFIG/$2" || true
+      if [ "$d" != "$4" ]; then
+        debug "lookup in $(norm_path "$d")"
+         
+        for i in "${@:5}"; do
+          _filter_file "$d/$i/$2" || true
+        done
+      fi
     done
   fi
+}
+
+# $1: name
+# $2: elem dir
+_elemRoot()
+{
+  local d="$2"
+  local t="$(dirname "$1")"
+  while [ "$t" != . ]; do
+    d="$(dirname "$d")"
+    t="$(dirname "$t")"
+  done
+  echo "$d"
 }
 
 # $1: depl name
@@ -743,10 +800,12 @@ setupDeployment()
     local croot="${compDefs["$comp"]}"
     if [ -z "$croot" ]; then
       log warn " component $comp for deployment $1 not defined"
+      deplCommon[$1]=
     else
       debug " using component $comp"
       _get_array ctxs "$comp" compCtxs
       debug " component contexts: ${ctxs[@]}"
+      deplCommon[$1]="$(_commonRoot "$croot" "$root")"
     fi
   fi
   deplComps[$1]="$comp"
@@ -922,25 +981,41 @@ _generate_context()
   } >"$2/$1/$GEN_IMP"
 
   #confirm "$(cat "$2/$1/$GEN_IMP")"
+  __generate_context "$1" "$2/$1"
+}
 
+# $1: deployment name
+# $2: gen dir
+__generate_context()
+{
   local stubs=( )
   get_stubs stubs "$1"
 
-  local ctx="$2/$1/$GEN_CTX"
+  local ctx="$2/$GEN_CTX"
   if [ -n "${opts[spiff]+x}" ]; then
-    log info spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" 
+    log info spiff merge "${stubs[@]}" "$2/$GEN_IMP" 
   fi
-  spiff merge "${stubs[@]}" "$2/$1/$GEN_IMP" >"$ctx"
+  spiff merge "${stubs[@]}" "$2/$GEN_IMP" >"$ctx"
 }
 
 # $1: name
-# $2: gen dir
+# $2: tmp gen dir
 _generate_exports()
 {
   _generate_context "$@"
   local ctx="$2/$1/$GEN_CTX"
   ACTION_create_exports "$1" "$ctx" >"$2/$1/$GEN_EXP"
   log confirm "    exp: $(md5sum "$2/$1/$GEN_EXP")"
+}
+
+# $1: name
+# $2: deployments gen dir
+__generate_exports()
+{
+  __generate_context "$@"
+  local ctx="$2/$GEN_CTX"
+  ACTION_create_exports "$1" "$ctx" >"$2/$GEN_EXP"
+  log confirm "    exp: $(md5sum "$2/$GEN_EXP")"
 }
 
 import_closure()
@@ -1184,4 +1259,14 @@ generate_manifest()
     Error "invalid call of 'generate_manifest': too many args ($#)"
   fi
   generate_context "$@" _publishManifest
+}
+
+__generate_manifest()
+{
+  if [ "$#" -ne 2 ]; then
+    Error "invalid call of 'generate_manifest': too many args ($#)"
+  fi
+  __generate_context "$@"
+  local manifest="${compMFs[${deplComps[$1]}]}"
+  ACTION_create_manifest "$1" "$2/$GEN_CTX" > "$2/$manifest"
 }

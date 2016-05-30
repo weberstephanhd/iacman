@@ -407,8 +407,13 @@ CMD_context()
   n="$(require_deplname "$1")"
   t="$(require_deployment "$n")"
   mkdir -p "$TMP"
-  log info "generating context for $n"
-  generate_context "$n" "$TMP"
+  if [ ${opts[local]+set} ]; then
+    log info "generating context for $n (local)"
+    __generate_context "$n" "$(get_instance_gen_dir "$n")"
+  else
+    log info "generating context for $n"
+    generate_context "$n" "$TMP"
+  fi
 }
 
 ########################
@@ -424,8 +429,13 @@ CMD_exports()
   n="$(require_deplname "$1")"
   t="$(require_deployment "$n")"
   mkdir -p "$TMP"
-  log info "generating exports for $n"
-  generate_exports "$n" "$TMP"
+  if [ ${opts[local]+set} ]; then
+    log info "generating exports for $n (local)"
+    __generate_exports "$n" "$(get_instance_gen_dir "$n")"
+  else
+    log info "generating exports for $n"
+    generate_exports "$n" "$TMP"
+  fi
 }
 
 ########################
@@ -441,8 +451,13 @@ CMD_manifest()
   n="$(require_deplname "$1")"
   t="$(require_deployment "$n")"
   mkdir -p "$TMP"
-  log info "generating manifest for $n"
-  generate_manifest "$n" "$TMP"
+  if [ ${opts[local]+set} ]; then
+    log info "generating manifest for $n (local)"
+    __generate_manifest "$n" "$(get_instance_gen_dir "$n")"
+  else
+    log info "generating manifest for $n"
+    generate_manifest "$n" "$TMP"
+  fi
 }
 
 ########################
@@ -458,7 +473,11 @@ exec_action()
   n="$(deplname_from_args)"
   t="$(require_deployment "$n")"
   local gen="$(get_instance_gen_dir "$n")"
-  generate_context "$n" "$TMP"
+  if [ ${opts[local]+set} ]; then
+    __generate_context "$n" "$gen"
+  else
+    generate_context "$n" "$TMP"
+  fi
   execute_action "$n" "$1" "$gen/$GEN_CTX" "${@:3}"
 }
 
@@ -511,6 +530,8 @@ if [ -z "$cmd" -o "$cmd" == help -o "$cmd" == "--help" -o "$cmd" == "-help" ]; t
   found "  -q         quiet"
   found "  -a         generate for all deployments used"
   found "  -k         keep temporary generation data"
+  found "  -l         local action call reusing pregenerated imports"
+  found "  -S         show spiff calls"
   found "  -D         debug"
   found "  -d <name>  deployment name"
   found
@@ -544,7 +565,7 @@ fi
 ###########################################################################
 declare -g -A opts
 declare -g -A params
-params=( [a]=all [k]=keep [q]=quiet [D]=debug [d]="=deployment" )
+params=( [a]=all [k]=keep [l]=local [S]=spiff [q]=quiet [D]=debug [d]="=deployment" )
 OPT_parse_options params opts "$@"
 shift $(( _cnt - 1 ))
 
