@@ -529,7 +529,7 @@ fi
 # help
 ###########################################################################
 
-if [ -z "$cmd" -o "$cmd" == help -o "$cmd" == "--help" -o "$cmd" == "-help" ]; then
+if [ -z "$1" -o "$1" == help -o "$1" == "--help" -o "$1" == "-help" ]; then
   found lsman - landscape management tool
   title "iac [<options>] <command> [<args>]"
   found

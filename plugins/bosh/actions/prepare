@@ -135,14 +135,16 @@ _handle_stemcells()
   local version
   local url
   while read release; do
-    version="$(jq -r '.stemcells[]|select(.name=="'$release'").version'<<<"$descriptor"| ignore_value null)"
-    url="https://bosh.io/d/stemcells/$release?v=$version"
-    found "Found stemcell $release: $version @ $url"
-    file="$gen/stemcells/$release-$version.tgz"
-    if [ $# -gt 0 ]; then
-      "$@"
-    fi
-  done < <( jq -r ".stemcells|map(.name)[]"<<<"$descriptor")
+    found stemcell $release
+    while read version; do
+      url="https://bosh.io/d/stemcells/$release?v=$version"
+      found "Found stemcell $release: $version @ $url"
+      file="$gen/stemcells/$release-$version.tgz"
+      if [ $# -gt 0 ]; then
+        "$@"
+      fi
+    done < <(jq -r '.resource_pools[].stemcell|select(.name=="'$release'").version'<<<"$descriptor"| sort | uniq | ignore_value null) 
+  done < <( jq -r ".resource_pools[].stemcell.name"<<<"$descriptor" | sort | uniq)
   found "actual stemcell version is $version"
   svers="$version"
 }
@@ -157,8 +159,8 @@ _handle_releases()
   while read release; do
     version="$(jq -r '.releases[]|select(.name=="'$release'").version'<<<"$descriptor"| ignore_value null)"
     url="$(jq -r '.releases[]|select(.name=="'$release'").url'<<<"$descriptor" | ignore_value null)"
-    git="$(jq '.releases[]|select(.name=="'$release'").git'<<<"$descriptor" | ignore_value null)"
-    ref="$(jq '.releases[]|select(.name=="'$release'").ref'<<<"$descriptor" | ignore_value null)"
+    git="$(jq -r '.releases[]|select(.name=="'$release'").git'<<<"$descriptor" | ignore_value null)"
+    ref="$(jq -r '.releases[]|select(.name=="'$release'").ref'<<<"$descriptor" | ignore_value null)"
 
     if [ -n "$url" ]; then
       found "Found release $release: $version @ $url"
@@ -281,6 +283,62 @@ _prepare_release()
       found "release $release version $version already uploaded to bosh"
     fi
   )
+}
+
+# $1 releasename
+# $2 version
+# $3 git url
+get_release_sources()
+{(
+  local release=$1
+  local version=$2
+  local url=$3
+  local ref=$4
+  if [ -z "$ref" ]; then
+    ref=master
+  fi
+  cd "$WSROOT"
+  if [  -d ".releases/$release" ]; then
+     if ! check_repo  ".releases/$release" "$url"; then
+       info "repository changed for $release"
+       rm -Rf  ".releases/$release"
+     fi
+  fi
+  if [ ! -d ".releases/$release/.git" ]; then
+    info "cloning $url"
+    mkdir -p .releases
+    git clone -b "$ref" "$url" ".releases/$release"  >/dev/null 2>&1
+  else
+   info "fetching $url"
+    ( cd .releases/$release
+      git fetch >/dev/null 2>&1
+      git checkout "origin/$ref" >/dev/null 2>&1
+    )
+  fi
+  ( cd .releases/$release
+    cid="$( (git log --reverse --"format=%H" origin/master -- "releases/$release/$release-$version.yml"
+             git log --reverse --"format=%H" origin/master -- "releases/$release-$version.yml") | head -1)"
+    if [ -z "$cid" ]; then
+      Error "version $version not found for $release"
+    fi
+    cur="$(git rev-parse HEAD)"
+    if [ "$cur" == "$cid" ]; then
+      info "version $version has been checkout into:"
+      info " - $(pwd)"
+    else
+      info "checkout $cid for version $version"
+      git checkout "$cid" >/dev/null 2>&1
+    fi
+  )
+)}
+
+release_blob_name()
+{
+  echo "releases/$release/$(basename "$file")"
+}
+compiled_blob_name()
+{
+  echo "compiled/$os-$svers/$release/$(basename "$file")"
 }
 
 _build_release()
