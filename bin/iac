@@ -225,6 +225,7 @@ showDeployment()
   _showHashedDeplList "$1" deplReqs "requires"
   _showHashedDeplList "$1" deplGlmps "glimpses"
 
+  _showHashedList "$1" deplIncls " includes"
   _showHashedList "$1" deplCtxs "context"
   _showHashedList "$1" deplStubs "stubs" norm_path
 }
@@ -478,7 +479,7 @@ exec_action()
   else
     generate_context "$n" "$TMP"
   fi
-  execute_action "$n" "$1" "$gen/$GEN_CTX" "${@:3}"
+  execute_action "$n" "$1" "$gen/$GEN_CTX" "${@:2}"
 }
 
 CMD_action()
@@ -504,16 +505,22 @@ CMD_deploy()
   exec_action deploy "$@"
 }
 
+# missing command handler
+# $1: prefix of missing command function
+# $2: command name
+# $3+: command arguments
+handle_action_command()
+{
+  exec_action "$2" "${@:3}"
+}
+
 ###########################################################################
 # link evaluation
 ###########################################################################
 
 link=$(basename "$0")
 if [ "$link" == iac ]; then
-  cmd="$1"
-  if [ $# -gt 0 ]; then
-    shift
-  fi
+  cmd="iac"
 else
   cmd=${link##iac}
 fi
@@ -565,9 +572,16 @@ fi
 ###########################################################################
 declare -g -A opts
 declare -g -A params
-params=( [a]=all [k]=keep [l]=local [S]=spiff [q]=quiet [D]=debug [d]="=deployment" )
+params=( [a]=all [k]=keep [n]=no-colors [l]=local [S]=spiff [q]=quiet [D]=debug [d]="=deployment" )
 OPT_parse_options params opts "$@"
 shift $(( _cnt - 1 ))
+
+if [ "$cmd" == iac ]; then
+  cmd="$1"
+  if [ $# -gt 0 ]; then
+    shift
+  fi
+fi
 
 #
 # support boshman based actions by providing path to source boshman
@@ -578,10 +592,13 @@ fi
 if [ ${opts[debug]+set} ]; then
   DEBUG[$location]=X
 fi
+if [ ${opts[no-colors]+set} ]; then
+  export color_mode=
+fi
 
 
 CMDS=( show closure order context exports manifest action ls prepare plan deploy lib vi directory colors )
 cmd="$(resolve_shortcut "$cmd" "${CMDS[@]}")"
 
-execute_command "$cmd" CMD_ "${CMDS[*]}" "$@"
+execute_command --invalid=handle_action_command "$cmd" CMD_ "${CMDS[*]}" "$@"
 

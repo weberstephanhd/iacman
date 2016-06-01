@@ -27,9 +27,9 @@ fix_stemcell()
   if [ -z "$IAAS_TYPE" -o "$IAAS_TYPE" == openstack ]; then
     local id
     local version="$1"
-    id="$(bosh stemcells 2>/dev/null | _lookup_entry 3 "$version" 4)"
+    id="$(exec_bosh stemcells 2>/dev/null | _lookup_entry 3 "$version" 4)"
     if [ -z "$id" ]; then
-      id="$(bosh stemcells 2>/dev/null | _lookup_entry 3 "$version\\*" 4)"
+      id="$(exec_bosh stemcells 2>/dev/null | _lookup_entry 3 "$version\\*" 4)"
     fi
     if [ -z "$id" ]; then
       Error "stemcell not found"
@@ -94,7 +94,7 @@ check_blob_access()
 # $2: version
 bosh_check_release()
 {
-  bosh releases 2> /dev/null | filter_fields 1 2 | {
+  exec_bosh releases 2> /dev/null | filter_fields 1 2 | {
     while read r v; do
       v="${v%%\*}"
       if [ "$r" == "$1" -a "$v" == "$2" ]; then
@@ -109,7 +109,7 @@ bosh_check_release()
 # $2: version
 bosh_check_stemcell()
 {
-  bosh stemcells 2>/dev/null | lookup_entry "$release" 3 | {
+  exec_bosh stemcells 2>/dev/null | lookup_entry "$release" 3 | {
     while read v; do
       v="${v%%\*}"
       if [ "$v" == "$version" ]; then
@@ -156,8 +156,19 @@ _handle_releases()
   local url
   while read release; do
     version="$(jq -r '.releases[]|select(.name=="'$release'").version'<<<"$descriptor"| ignore_value null)"
-    url="$(jq -r '.releases[]|select(.name=="'$release'").git'<<<"$descriptor" | ignore_value null)"
-    found "Found release $release: $version @ $url"
+    url="$(jq -r '.releases[]|select(.name=="'$release'").url'<<<"$descriptor" | ignore_value null)"
+    git="$(jq '.releases[]|select(.name=="'$release'").git'<<<"$descriptor" | ignore_value null)"
+    ref="$(jq '.releases[]|select(.name=="'$release'").ref'<<<"$descriptor" | ignore_value null)"
+
+    if [ -n "$url" ]; then
+      found "Found release $release: $version @ $url"
+    else
+      if [ -n "$git" ]; then
+        found "Found release $release: $version @ source: $git $ref"
+      else
+        warn "Found release $release: $version NO RELEASE LOCATION CONFIGURED"
+      fi
+    fi
     file="$gen/releases/$release-$version.tgz"
     if [ $# -gt 0 ]; then
       "$@"
@@ -203,7 +214,7 @@ _prepare_stemcell()
     found "stemcell version $version already uploaded to bosh"
   else
     info "uploading stemcell $release version $version"
-    bosh upload stemcell --skip-if-exists "$file"
+    exec_bosh upload stemcell --skip-if-exists "$file"
     fix_stemcell $version
   fi
 }
@@ -230,7 +241,7 @@ _prepare_release()
       fi
       if [ -f "$file" ]; then
         info "uploading compiled release for $os version $svers"
-        bosh upload release --skip-if-exists $file
+        exec_bosh upload release --skip-if-exists $file
       else
         info "no compiled release found"
 
@@ -246,26 +257,53 @@ _prepare_release()
           fi
         fi
         if [ ! -f "$file" ]; then
-          #synced=X
-          #_build_release "$@"
-          if [ -z "$url" ]; then
-            Error "no url for release $release/$version"
+          if [ -n "$url" ]; then
+            found "downloading from the internet"
+            wget "$url" -O "$file" 2>/dev/null
           fi
-          found "downloading from the internet"
-          wget "$url" -O "$file" 2>/dev/null
+        fi
+        if [ ! -f "$file" ]; then
+          if [ -n "$git" ]; then
+            _build_release "$@"
+          else
+            info "no source url for release $release"
+          fi
         fi
 
         if [ -f "$file" ]; then
           info "uploading release"
-          bosh upload release --skip-if-exists $file
+          exec_bosh upload release --skip-if-exists $file
         else
-          info "no prepackged release $release version $version found"
-          return 1
+          Error "no release location configured for release $release/$version"
         fi
       fi
     else
       found "release $release version $version already uploaded to bosh"
     fi
+  )
+}
+
+_build_release()
+{
+  (
+    info syncing sources for $release $version from "$git"
+    get_release_sources $release $version "$git"
+    cd "$WSROOT/.releases/$release"
+    local base
+    base=releases/$release
+    if [ ! -d "$base" -a ! -h "$base" ]; then
+      base=releases
+    fi
+    if [ ! -f "$base/$release-$version.tgz" ]; then
+      info "rebuilding release"
+      #git submodule update --init --recursive
+      info bosh create release $base/$release-$version.yml --with-tarball --name $release
+      bosh create release $base/$release-$version.yml --with-tarball --name $release
+    fi
+    if [ ! -f "$base/$release-$version.tgz" ]; then
+      Error "cannot create intended release"
+    fi
+    cp $base/$release-$version.tgz "$file"
   )
 }
 
@@ -298,6 +336,22 @@ prepare_deployment()
 }
 
 
+##############
+# bosh calls
+##############
+add_opt()
+{
+  local v="$(jq -r "$2" <<<"$ACCESS_INFO")"
+  if [ "$v" != null ]; then
+    BOSH_OPTS+=( "$1" "$v" )
+  fi
+}
+
+exec_bosh()
+{
+  bosh "${BOSH_OPTS[@]}" "$@"
+}
+
 ###############################
 # main
 ###############################
@@ -310,6 +364,17 @@ else
   fi
 fi
 
+ACCESS_INFO="$(get_yaml_path "$1" .bosh)"
+if [ "$ACCESS_INFO" != null ]; then
+  add_opt -u .username
+  add_opt -p .password
+  add_opt -t .target_url
+else
+  ACCESS_INFO="no bosh info found"
+fi 
+BOSH_OPTS+=( -d "$GEN_DIR/manifest.yml" )
+BOSH_OPTS+=( --no-color )
+
 NAME="$(get_yaml_field "$GEN_DIR/manifest.yml" .name)"
 
 if [ -z "$IAC_QUIET" ]; then
@@ -317,6 +382,16 @@ if [ -z "$IAC_QUIET" ]; then
 fi
 case "$CMD" in
   prepare) prepare_deployment "$GEN_DIR/manifest.yml";;
-  *)       bosh -d "$GEN_DIR/manifest.yml" "$CMD" "${@:2}"
+  bosh)    
+           case "$2" in 
+             vms)  if [ $# -eq 2 ]; then
+                     exec_bosh vms "$NAME"
+                   else
+                     exec_bosh "${@:2}"
+                   fi;;
+             info) echo "$ACCESS_INFO";;
+             *)    exec_bosh "${@:2}";;
+           esac;;
+  *)       exec_bosh "$CMD" "${@:2}"
 esac
 

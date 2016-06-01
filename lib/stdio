@@ -13,8 +13,12 @@ exec 5>&2
 declare -g -A DEBUG
 location=debug
 
-color_mode=X
-color_bold=X
+if [ -z ${color_mode+x} ]; then
+  color_mode=X
+fi
+if [ -z ${color_bold+x} ]; then
+  color_bold=X
+fi
 
 debug()
 {

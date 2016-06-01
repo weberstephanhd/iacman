@@ -162,6 +162,7 @@ declare -gA deplCommon  # commom root dir of component and deployment def
 ### hashed arrays (datatype provided by lib/data)
 # deplCtxs    # contexts for deployments
 # deplDCtxs   # descriptor contexts for deployments
+# deplIncls   # modules included in search path
 # deplStubs   # effective stubs for deployments
 # deplDStubs  # effective descriptor stubs for deployments
 # deplReqs    # imports for deployments
@@ -447,6 +448,12 @@ lookupStub()
        _lookupTree "$c" "$2" "$d" "$common" "$DIR_CONFIG"
      fi
   fi
+
+  
+  _get_array a "$i" deplIncls || true
+  for i in "${a[@]}"; do
+    _filter_file "$i/$DIR_CONFIG/$2"
+  done
 
   _lookupTree "$1" "$2" "${deplDefs[$1]}" "/" "$DIR_DEPLOYMENTS/$1" "$DIR_CONFIG"
 }
@@ -837,6 +844,17 @@ setupDeployment()
   debug " glimpses ${filtered[@]}"
   _set_array "$1" deplGlmps "${filtered[@]}"
   _set_array "$1" deplImps "${reqs[@]}"
+
+  debug " analyse includes..."
+  _get_yaml_list '.includes[]' <<<"$def"
+  debug " includes ${res[@]}"
+  _set_array "$1" deplIncls "${res[@]}"
+  for i in "${res[@]}"; do
+    local m="${modDefs[$i]}"
+    if [ -z "$m" ]; then
+      log warn " module $i for deployment $1 not defined"
+    fi
+  done
 
   debug " analyse context..."
   _get_yaml_list '.context[]' <<<"$def"
