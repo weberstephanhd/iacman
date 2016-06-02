@@ -36,21 +36,33 @@ CMD_directory()
     case "$type" in
       deployment)
         cacheAll
-        n="$(require_deplname "$DNAME")"
+        n="$(require_deplname)"
         echo "${deplDefs[$n]}";;
+      state)
+        cacheAll
+        n="$(require_deplname)"
+        get_state_dir "$n";;
+      gen)
+        cacheAll
+        n="$(require_deplname)"
+        get_instance_gen_dir "$n";;
       component)
-        if [ -n "$CROOT" ]; then
-          echo "$CROOT"
+        n="$(get_default_deplname)"
+        if [ -z "$n" ]; then
+          if [ -n "$CROOT" ]; then
+            echo "$CROOT"
+          else
+            Error "not in a deplyoment or component"
+          fi
         else
           cacheAll
-          n="$(require_deplname "$DNAME")"
           get_component_dir "$n"
         fi;;
       module) echo "$MROOT";;
       landscape) echo "$LROOT";;
       config)
         cacheAll
-        n="$(require_deplname "$DNAME")"
+        n="$(require_deplname)"
         if [ -z "$n" ]; then
           Error "no deployment found"
         fi

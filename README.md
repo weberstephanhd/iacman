@@ -110,19 +110,25 @@ typically provided by another deployment. This kind of wiring is done
 in the deployment. Therefore a deployment may configure _dependencies_ to
 other deployments. On the other side every deployment may provide _exports_
 describing reusable configuration information used by other deployments to
-build their deployment context. Iacman analyses the dependencies of a
+build their deployment context. These exports build the contract of a deployment
+that can be used by others. This is definately not the deployment manifest,
+it is an explicitly designed set of configuration information, that should be
+kept as stable as possible during the evolution of a deployment to clearly
+decouple multiple deployments. Iacman analyses the dependencies of a
 deployment and provides access to the appropriate export information as part
 of the context.
 
 The task of iacman now is to control these generation processes. The context
-is generated based on formal settings of deployment. Therefore the deployment
+is generated based on formal settings of a deployment. Therefore the deployment
 configures dependencies to other deployments and configuration stubs containing
 rules and values to finally generate the context. Dependencies are resolved to
-the export information of the referenced deployments. The rule engine used to
-merge and evaluate all the involved rule and configuration files is spiff++,
-an improved version of the well-known tool in the bosh context. The framework
-gathers the relevant stub files for spiff according to the actual landscape
-description.
+the export information of the referenced deployments.
+
+The rule engine used to merge and evaluate all the involved rule and
+configuration files is spiff++, an improved version of the well-known tool in
+the bosh context. The framework gathers the relevant stub files for spiff
+according to the actual landscape description, executed a merge and passes the
+resulting context to the actions to be executed.
 
 A component provides so-called _actions_ that finally implement component
 specific procedures to fulfill certain tasks, like export creation, manifest
@@ -130,7 +136,6 @@ creation or the final deployment. All those actions are called with the
 aggregated context to provide the deployment specific configuration set.
 
 The general process looks like follows:
-
 ```
 
   deployment <..dependencies.. deployment definition ....> component
@@ -155,6 +160,82 @@ The general process looks like follows:
 ### Singleton landscapes
 
 ### Separation between Landscape instance and landscape template
+
+## The toolset
+
+Iacman as toolset supports two usage scenarios:
+- It provides a shell library environment for accessing the landscape model,
+  generating the context and executing actions. This library can be used
+  to implement own tools.
+- It provides a Command Line Interface (`iac`) to interactively manage
+  a deployment landscape.
+
+### The Command Line Interface
+
+The basic command to work with iacman is the command `iac`. It works in
+any directory of a landscape filesystem structure. Therefore it automatically
+identifies the actual position in the landcape, the element represented by this
+location and the complete landscape structure.
+ 
+The command offers various sub commands to work on the actual element, any
+other element or the complete landscape.
+
+The general syntax is
+
+<center>`iac {<options>} <sub command> {<command arguments>}`</center>
+
+Additionally there are several shortcuts of the form `iac<sub>` (for exaple iacls).
+
+Any subcommand may be abbreviated (for example `manifest` -> `man`). The
+following sub commands are supported:
+
+- `ls [<dir>]`
+  list the logical landscape structure or the specified sub structure.
+
+- `show [[component|deployment|module|landscape] <element name>]`
+  show details for a given element. If no element is specified the element
+  represented by the current working directory is used. If no element type
+  is specified the element, regardless of its type, with the given name is 
+  shown. Thereby deployments are preferred.
+
+- `directory [deployment|component|module|config|state|gen|landscape]`
+  print the selected directory path of the given element in the actual
+  landscape. This command can be used by any tool called in the landscape
+  structure to determine dedicated locations.
+  * `deployment`: the directory of the deployment definition
+  * `config`: the directory of the deployment configuration in the landscape
+  * `state`: the directory of the deployment state in the landscape
+  * `gen`: the directory of the private generation directory of the deployment
+  * `component`: the directory of the component (of the given deployment)
+  * `module`: the root directory of the actual module
+  * `landscape`: the root directory of the landscape
+  The above keys may be abbreviated.
+
+- `context [<deployment name>]`
+  generate the context for the given deployment.
+
+-  `manifest [<deplyoment name>]`
+   generate the deployment manifest for the given deployment.
+
+-  `exports [<deplyoment name>]`
+   generate the export contract for the given deployment.
+
+- `order [<deployment name>|all]`
+   determine a valid deployment order for the given deployment(s).
+
+-  `action <action name>`
+   call named action for the given deployment. The deployment can be specified
+   via the option `-d`.
+
+-  `prepare [<deplyoment name>]`
+   call prepare action for the given deployment.
+
+-  `deploy [<deplyoment name>]`
+   call deploy action for the given deployment.
+
+Any non-existent sub command name will be interpreted as action name and `iacman`
+tries to call the appropriate action
+
 
 ## Descriptive Elements
 

@@ -141,6 +141,25 @@ require_default_deplname()
   fi
 }
 
+get_default_deplname()
+{
+  if [ ${opts[deployment]+set} ]; then
+    echo "${opts[deployment]}"
+  else
+    if [ -n "$DNAME" ]; then
+      echo "$DNAME"
+    else
+      if [ -n "$CNAME" ]; then
+        local a=( )
+        set_array a get_component_deployments "$CNAME"
+        if [ ${#a[@]} -eq 1 ]; then
+          echo "${a[0]}"
+        fi
+      fi
+    fi
+  fi
+}
+
 # $1: deployment name
 get_component_deployments()
 {
