@@ -160,12 +160,12 @@ get_default_deplname()
   fi
 }
 
-# $1: deployment name
+# $1: component name
 get_component_deployments()
 {
   for i in "${!deplComps[@]}"; do
     if [ "${deplComps[$i]}" == "$1" ]; then
-      echo "$1"
+      echo "$i"
     fi
   done
 }

@@ -200,6 +200,10 @@ is decribed in a single root folder:
     │   └── mimes
     │       ├── logo.base64
     │       └── product_logo.base64
+    ├── cf-apps
+    │   └── my-app
+    │       ├── component.yml
+    │       └── manifest-template.yml
     ├── iaas
     │   ├── infra
     │   │   ├── component.yml
@@ -249,6 +253,14 @@ implementations are used by default to handle a typical bosh deployment.
 Bosh deployments extend the _context_ by an own merge stub, here `cf.yml`.
 Accordingly, this file is found in the component folder.
 
+If the deployment manifest required by the component uses the yaml format (that's the case for bosh deployments), the context generation done by iacman can be
+extended into the component to directly generate the manifest without any
+dedicated mechanism provided by the component. This is done here by always
+adding the manifest template `cf.yml` provided by the component to the
+context stubs. As a result the generated context de-facto can basically
+directly be used as deployment manifest.
+
+
 Because there is a bosh deployment, there will be the need to deploy bosh,
 typically with bosh-init. This is also modelled by an own component, here
 called `bosh`. This component now contains an `actions` folder hosting the
@@ -290,18 +302,18 @@ component (using the same name).
     ├── cf
     │   ├── config.yml
     │   └── deployment.yml
+    ├── cf-apps
+    │   └── my-app
+    │       ├── component.yml
+    │       └── manifest-template.yml
     ├── iaas
     │   ├── infra
     │   │   ├── bosh.pem
     │   │   ├── bosh.pub
     │   │   ├── cert-chain.pem
-    │   │   ├── cert.pem
-    │   │   ├── cert-priv.pem
-    │   │   ├── cert-pub.pem
+    │   │   ├── ...
     │   │   ├── config.yml
-    │   │   ├── deployment.yml
-    │   │   ├── jumpbox.pem
-    │   │   └── jumpbox.pub
+    │   │   └── deployment.yml
     │   └── jumpbox
     │       ├── config.yml
     │       └── deployment.yml
@@ -355,10 +367,7 @@ The file for `cf` could look like this:
 
 ```
 ---
-
 landscape: (( merge ))
-infra: (( merge ))
-
 imports: (( merge ))
 
 #
@@ -378,23 +387,18 @@ config:
     post_setup_hook: ~
     logging_level: debug
 
-  ha_proxy:
-    cert:
-    floating_static_ips: (( [] ))
+...
+
+  passwords:
+    nats: nats
+    cc_admin: cc_admin
+    ...
 
   uaa_client_secrets:
-    admin:  (( merge ))
-    cc:  (( merge ))
-    cc_routing:  (( merge ))
-    cc-service-dashboards:  (( merge ))
-    cloud_controller_username_lookup:  (( merge ))
-    app-direct:  (( merge ))
-    login: (( merge ))
-    doppler: (( merge ))
-    gorouter: (( merge ))
-    notifications: (( merge ))
-    tcp_emitter: (( merge ))
-    tcp_router: (( merge ))
+    admin:  admin-secret
+    cc:  cc-secret
+    gorouter: gorouter-secret
+    ...
 
 #
 # landscape wiring of cf
@@ -456,13 +460,168 @@ All the exports of required components are mapped to a sub node of a top-level
 
 Please have a look at the [spiff docu](https://github.com/mandelsoft/spiff/blob/master/README.md) to learn more about the merging and interpolation capabilities used for the context files.
 
-
 All the knowledge about the concrete wiring of concrete deployments is strictly
 separated from the components. They just define variation points that may or
 may not be filled by a concrete deployment. Therefore they can be shared
 mong many different usage scenarions and landscapes.
 
+In the cf deployment example a strict separation between the operators 
+configuration contract and the intrumentation of the cf component
+has been implemented. This is not enforced by iacman, it's just content for
+the framework. It is an implementation descision of the designed of
+the landscape layout. For a singleton landscape it is definately not
+required. Here the configuration could directly adapt the component.
+But it is a good starting point for the next scenario, where the
+same basic landscape layout should be used for multiple landscape instances.
+
 ### Separation between Landscape instance and landscape template
+
+A more complex scenario could involve multiple landscapes that should
+follow the same pattern, for example a development, a test and a productive 
+landscape. The set of components here is identical, but also the set of
+deployments and their wiring, only the concrete settings of some
+dedcated configuration properties are dfferent from landscape instance to
+landscape instance. For example, the domain name, secrets and certificates, or
+the scaling of the cf deployment.
+
+Using iacman this is quite simple. Just take the top level landscape
+structure from the scenario above and put it into a _module_.  Modules
+are another element type of the the iacman structure. They are stored
+below a folder _modules_. This folder may contain multiple modules, which
+should have different names (so far module names are flat).
+
+For this scenario the module name _core_ is used. The result looks as 
+follows:
+
+```
+.
+├── config
+│   └── landscape.yml
+└── modules
+    └── core
+        ├── components
+        ├── config
+        │   └── landscape.yml
+        └── deployments
+            ├── bosh
+            │   ├── config.yml
+            │   └── deployment.yml
+            ├── cf
+            │   ├── config.yml
+            │   └── deployment.yml
+            ├── iaas
+            │   ├── infra
+            │   │   ├── config.yml
+            │   │   └── deployment.yml
+            │   └── jumpbox
+            │       ├── config.yml
+            │       └── deployment.yml
+            ├── logsearch
+            │   ├── config.yml
+            │   └── deployment.yml
+            └── riemann
+                ├── config.yml
+                └── deployment.yml
+```
+
+Here the local landscape config settings are kept in the top-level config
+folder. The instance specific seetings, like certificates and keys are
+are left at the top level structure. Ans now we can make use of the
+separation of wiring and configuration properties shown in the scenario above.
+For all deployments in the landscape root folder a _deployment configuration_
+is added, It looks like a deployment definition, but without the
+_deployment.yml_ file. Here only the config file _config.yml_ (and other
+landscape instance specific files, like the key files) are stored.
+The config file now only hosts the instance specific local configuration
+settings used for the dedicated landscape instance. All the wiring
+stuff is left at the level of the module.
+
+The final result then looks as follows:
+
+```
+.
+├── config
+│   └── landscape.yml
+├── deployments
+│   ├── bosh
+│   │   └── config.yml
+│   ├── cf
+│   │   └── config.yml
+│   ├── iaas
+│   │   ├── infra
+│   │   │   ├── bosh.pem
+│   │   │   ├── bosh.pub
+│   │   │   ├── cert-chain.pem
+│   │   │   ├── cert.pem
+│   │   │   ├── cert-priv.pem
+│   │   │   ├── cert-pub.pem
+│   │   │   ├── config.yml
+│   │   │   ├── jumpbox.pem
+│   │   │   └── jumpbox.pub
+│   │   └── jumpbox
+│   │       └── config.yml
+│   ├── logsearch
+│   │   └── config.yml
+│   └── riemann
+│       └── config.yml
+└── modules
+    └── core
+        ├── components
+        ├── config
+        │   └── landscape.yml
+        └── deployments
+            ├── bosh
+            │   ├── config.yml
+            │   └── deployment.yml
+            ├── cf
+            │   ├── config.yml
+            │   └── deployment.yml
+            ├── iaas
+            │   ├── infra
+            │   │   ├── config.yml
+            │   │   └── deployment.yml
+            │   └── jumpbox
+            │       ├── config.yml
+            │       └── deployment.yml
+            ├── logsearch
+            │   ├── config.yml
+            │   └── deployment.yml
+            └── riemann
+                ├── config.yml
+                └── deployment.yml
+```
+
+The module still contains a global config file `landscape.yml` that can be
+used to store landscape instance agnostic shared information, like the 
+default bosh stemcell version to use.
+
+With this setup the same core module can be copied or shared among several
+landscape inmstances. It does only contain the generic wiring and deployment
+definitions but no landscape instance specific information. This is added
+by the landscape level. So, the landscape level itself is just some kind
+of root module. The final module structure can be as deep as required.
+
+But now the question arises, how in such a recursive structure the dedicated
+context for the effective deployments is generated.
+
+The deployment definition defines the set and order of basic configuration
+files that should build up the context. The file name here represents just 
+some semanatic, but not a dedicated file. So, the concrete instance of the 
+semantic, the concrete files, are looked up along the module tree.
+
+If the context show contain a _semantic_ `config.yml`, then such a file is
+searched for in the component folder and up the module tree starting
+from the dpeloyment definition in the config and deployment folder for the 
+dedicated deployments.
+
+In the above example, that's for `config.yml` for the deployment `cf`:
+- /modules/core/deployments/cf/config.yml
+- /deployments/cf/config.yml
+
+If the complete list declared in the deployment definition is processed
+this way, the result is a lisz of stubs that build up the context. It
+is then extended by the imports and merged with `spiff merge`.
+
 
 ## The toolset
 
