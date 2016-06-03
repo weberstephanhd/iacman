@@ -65,20 +65,21 @@ If bosh is used, for example, to maintain a cloud foundry landscape, in
 addition another kind of application should be covered, cloud fonndry based
 applications.
 
-Here yacman enters the scene. It is able to describe deployment landscapes
-consisting of various deployment types, the wiring of the involved component
-and their deployment.
+Here iacman enters the scene. It uses a simple hierrachical filesystem structure
+to describe deployment landscapes consisting of various deployment types, the
+wiring of the involved components and their deployment. The files are structured
+in directories so that different realms of responsibiliy are clearly separated.
+This allows to spread the different parts over multiple source repositories 
+to enable simple reuse of those parts in various different landscape setups.
 
 ## Overview
 
 Iacman is a shell and spiff++ lightweight toolset for describing and
-maintaining deployment landscapes consistingof multiple deployments roughly
+maintaining deployment landscapes consistini gof multiple deployments roughly
 based on the idea behind bosh and bosh workspace. The central element is the
 deployment that will be controlled a set of structured configuration values in
 form of a yaml files. In contrast to bosh, that describes a single deployment
-composed of software given by so-called releases, iacman focuses on the
-composition and wiring of multiple deployments and strictly separates between
-the software controlling the deployment and its configuration.
+composed of software given by so-called releases, iacman focuses on the composition and wiring of multiple deployments and strictly separates between the software controlling the deployment and its configuration.
 
 This separation leads to two related but clearly distinguished elements, the 
 deployment component (or shortly component) and the deployment instance (or
@@ -157,7 +158,309 @@ The general process looks like follows:
 
 ## Basic Scenarios
 
+The basis of iacman is a simple hierarchical filesystem layout used to organize
+the various elements of a landscape. This layout can be used to introduce 
+the basic structuring ideas behind iacman and simple usage scenarios just by
+drawing the layout without the need of detailed information of the various
+configuration files used in real applications of iacman.
+
 ### Singleton landscapes
+
+One of the most simple scenario that can be handled by iacman is a landscape
+singleton describing a set of dedicated interlinked deployments to provide
+some value for demonstration.
+Lets assume our landscape consists of a central cloud foundry deployment and
+some standard cloud foundry application. The landscape is enriched with a
+riemann deployment for monitoring and a logsearch deployment for to catching
+logs. The landscape itself is deployed into an AWS account and uses bosh to
+deploy and maintain the infrastructure parts. The setup of the AWS environment
+is done with terraform.
+
+So a first step is describe all the required component. complete landscape
+is decribed in a single root folder:
+
+```
+.
+└── components
+    ├── bosh
+    │   ├── actions
+    │   │   ├── create_exports
+    │   │   ├── create_manifest
+    │   │   ├── deploy
+    │   │   └── prepare
+    │   ├── bosh-template.yml
+    │   ├── component.yml
+    │   └── helper
+    │       ├── deploy
+    │       ├── export.yml
+    │       └── manifest.yml
+    ├── cf
+    │   ├── cf.yml
+    │   ├── component.yml
+    │   └── mimes
+    │       ├── logo.base64
+    │       └── product_logo.base64
+    ├── iaas
+    │   ├── infra
+    │   │   ├── component.yml
+    │   │   ├── config-template.yml
+    │   │   ├── helper
+    │   │   │   ├── cert.sh
+    │   │   │   ├── export.yml
+    │   │   │   ├── mapping.yml
+    │   │   │   └── setup.sh
+    │   │   ├── main.tf
+    │   │   └── variables.tf
+    │   └── jumpbox
+    │       ├── component.yml
+    │       ├── config-template.yml
+    │       ├── helper
+    │       │   ├── config.yml
+    │       │   ├── export.yml
+    │       │   ├── install.sh
+    │       │   ├── mapping.yml
+    │       │   ├── mount.sh
+    │       │   └── setup_user.sh
+    │       ├── main.tf
+    │       └── variables.tf
+    ├── logsearch
+    │   ├── component.yml
+    │   └── system.yml
+    └── riemann
+        ├── component.yml
+        └── system.yml
+```
+
+The components are stored blow a folder `components`. Every component may have 
+an hierarchical name, for example `iaas/infra` that is mapped to a directory
+path below the `components` folder. Every component has at least one file,
+the component descriptor `components.yml` describes the component.
+For the `cf` deployment it may look like this:
+
+```
+type: bosh
+
+context:
+  - cf.yml
+```
+
+It states that this a component of type bosh. Here the bosh standard action
+implementations are used by default to handle a typical bosh deployment.
+Bosh deployments extend the _context_ by an own merge stub, here `cf.yml`.
+Accordingly, this file is found in the component folder.
+
+Because there is a bosh deployment, there will be the need to deploy bosh,
+typically with bosh-init. This is also modelled by an own component, here
+called `bosh`. This component now contains an `actions` folder hosting the
+standard actions to control the deployment:
+- `prepare` is used to setup some initial information for the deployment
+- `create_manifest` is used to generate the bosh-init deployment manifest
+  from a template and the generated context.
+- `create_exports` is used to generate the export information
+- `deploy`is used to finally perform the deployment
+
+Bosh is not able to setup an VPC environment at its own. It relies
+on its exsistence but requires some information, like subnet and security
+group ids from AWS for its installation, and the AWS credentials 
+to handle the deployment requests. Therefore a dedicated component
+`iaas/infra` is used to host the  terraform  ing of a VPC and required
+subnets in AWS.
+
+Addtionaly a dedicated access point for the landscape is required, a jumpbox.
+This is also modelled as component, that hosts the `terraform` of a single
+VM used to maintain the landscape. Both components use the standard
+_terraform_  component type.
+
+As a second top-level folder now the deployments are added. They are
+hosted in a folder `deployments`. Like component names, deployment names
+might be hierarchical. In this simple scenario every component is deployed
+exactly once. Therefore there will be one deployment folder for every
+component (using the same name).
+
+```
+.
+├── components
+│   └── ...
+├── config
+│   └── landscape.yml
+└── deployments
+    ├── bosh
+    │   ├── config.yml
+    │   └── deployment.yml
+    ├── cf
+    │   ├── config.yml
+    │   └── deployment.yml
+    ├── iaas
+    │   ├── infra
+    │   │   ├── bosh.pem
+    │   │   ├── bosh.pub
+    │   │   ├── cert-chain.pem
+    │   │   ├── cert.pem
+    │   │   ├── cert-priv.pem
+    │   │   ├── cert-pub.pem
+    │   │   ├── config.yml
+    │   │   ├── deployment.yml
+    │   │   ├── jumpbox.pem
+    │   │   └── jumpbox.pub
+    │   └── jumpbox
+    │       ├── config.yml
+    │       └── deployment.yml
+    ├── logsearch
+    │   ├── config.yml
+    │   └── deployment.yml
+    └── riemann
+        ├── config.yml
+        └── deployment.yml
+```
+
+The deloyment folders contain deployment definitions, indicated by the file
+`deployment.yml`. A sample for `bosh` could look like this:
+
+```
+component: bosh
+
+requires:
+  - iaas/infra
+  - iaas/jumpbox
+
+context:
+  - config.yml
+  - landscape.yml
+``` 
+
+bosh requires information from the infrastructure setunp (`iaas/infra`) and
+from the jumpbox setup to allow remote (tunneled) access to the deployed bosh.
+
+The context describing the dedicatd bosh instance now should incorporate a 
+`config.yml` and some central landscape information taken from `landscape.yml`.
+Such central configuration files not assigned to a dedicated component or deployment are stored in third folder `config`.
+
+The content of such a file could look like this:
+
+```
+landscape:
+  type: aws
+  name: demo
+  domain:  (( landscape.name ".acme.io" ))
+```
+
+It contains some central information used all over the landscape.
+
+Note: If you components are designed to handle multiple iaas layers, here also
+      the dedicated landscape type to use should be configured.
+
+The `config.yml` files now contain the instance configuration and
+the wiring among the deploymentments.
+The file for `cf` could look like this:
+
+```
+---
+
+landscape: (( merge ))
+infra: (( merge ))
+
+imports: (( merge ))
+
+#
+# landscape instance configuration API
+#
+config:
+  disable_http: true
+  skip_ssl_validation: false
+  disable_nats_logging: true
+
+  dea_next:
+    disk_mb: ~
+    disk_overcommit_factor: ~
+    memory_mb: ~
+    memory_overcommit_factor: ~
+
+    post_setup_hook: ~
+    logging_level: debug
+
+  ha_proxy:
+    cert:
+    floating_static_ips: (( [] ))
+
+  uaa_client_secrets:
+    admin:  (( merge ))
+    cc:  (( merge ))
+    cc_routing:  (( merge ))
+    cc-service-dashboards:  (( merge ))
+    cloud_controller_username_lookup:  (( merge ))
+    app-direct:  (( merge ))
+    login: (( merge ))
+    doppler: (( merge ))
+    gorouter: (( merge ))
+    notifications: (( merge ))
+    tcp_emitter: (( merge ))
+    tcp_router: (( merge ))
+
+#
+# landscape wiring of cf
+#
+bosh: (( imports.bosh.local ))
+
+meta:
+  deployment_name: cf
+  vcap_password: (( imports.bosh.vcap_password ))
+  director_uuid: (( imports.bosh.director_uuid ))
+
+  sys_domain: (( deployment_name "."  landscape.domain ))
+  app_domain: (( deployment_name "apps."  landscape.domain ))
+
+  secrets:
+    uaa: (( config.uaa_client_secrets ))
+
+    nats: (( config.passwords.nats ))
+    cf_admin: (( config.passwords.cc_admin ))
+...
+
+  extensions:
+    collector: (( defined(imports.riemann) ? *.extensions.collector :~ ))
+
+    syslog: (( defined(imports.logsearch) ? *.extensions.syslog :~ ))
+
+...
+
+#
+# optional variation point implementations
+#
+# Those implementation typically are templates to be able to optionally
+# define complex property sets.
+# these templates are only instantiated if a dedicated configuration option
+# is enabled, typically detected by the existence or non-null value of a
+# dedicated config property.
+# Those templates generate a complex yaml structue, that is optionally 
+# inserted, if the configuration option is active
+#
+extensions:
+  <<: (( &temporary ))
+  collector:
+    <<: (( &template ))
+    instances: 1
+    security_group: (( imports.riemann.graphite.client_security_group ))
+    config:
+      use_graphite: true
+      deployment_name: CF
+      graphite:
+        address: (( imports.riemann.graphite.host ))
+        port: (( imports.riemann.graphite.port ))
+
+...
+
+```
+
+All the exports of required components are mapped to a sub node of a top-level
+`imports` node according to the name of the required deployment (for example `imports.riemann`).
+
+Please have a look at the [spiff docu](https://github.com/mandelsoft/spiff/blob/master/README.md) to learn more about the merging and interpolation capabilities used for the context files.
+
+
+All the knowledge about the concrete wiring of concrete deployments is strictly
+separated from the components. They just define variation points that may or
+may not be filled by a concrete deployment. Therefore they can be shared
+mong many different usage scenarions and landscapes.
 
 ### Separation between Landscape instance and landscape template
 
@@ -242,6 +545,28 @@ tries to call the appropriate action
 ### Components
 
 ### Plugins
+
+Evary component provides actions to execute dedicatd tasks, like export
+creation. Logically those actions belong to the component. But the action
+implementation typically does not need to implement dedicated aspects of
+a dedicated deplyoment, because those acpects are separated into the
+deplyoments. The task of the actions is dependend only on the kind
+of component, for example a bosh deployment. All bosh deployments could
+basically be handled the same way, just using different manifest templates,
+as log as they do not require additional special step that cannot be
+generalized.
+
+Iacman _plugins_ now provide a possiblity to share dedicated features of a
+component among multiple similar ones. Therefore the component may provide
+a type attribute specifying a type string. The iacman installation provides
+the possibolity to host type plugins, that have the same filesystem structure
+like components. So, a plugin might offer action scripts in its `actions`
+folder. Iaxcman now lookups a required action script in the component
+and an optionally configured type plugin.
+
+Additionally the type plugin might contain a `component.yml` that is
+merged with the one specified in the component.
+
 
 ### Deployments
 
