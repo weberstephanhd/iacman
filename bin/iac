@@ -408,6 +408,23 @@ CMD_order()
 }
 
 ########################
+# generate imports
+
+CMD_imports()
+{
+  setupEnv
+  cacheAll
+
+  local t
+  local n
+  n="$(require_deplname "$1")"
+  t="$(require_deployment "$n")"
+  mkdir -p "$TMP"
+  log info "generating imports for $n"
+  generate_imports "$n" "$TMP"
+}
+
+########################
 # generate context
 
 CMD_context()
@@ -561,6 +578,7 @@ if [ \( "$cmd" == iac -a -z "$1" \) -o "$1" == help -o "$1" == "--help" -o "$1" 
   found "                                              based on current working directory"
   found "  show [[component|deployment|module] <name>] details for dedicated element"
   found "  closure [<name>]                            dependency closure"
+  found "  imports                                     generate imports"
   found "  context                                     generate context"
   found 
   found "Handle actions provided by component for deployments:"
@@ -609,7 +627,7 @@ if [ ${opts[no-colors]+set} ]; then
 fi
 
 
-CMDS=( show closure order context exports manifest action ls prepare plan deploy lib vi directory colors )
+CMDS=( show closure order imports context exports manifest action ls prepare plan deploy lib vi directory colors )
 cmd="$(resolve_shortcut "$cmd" "${CMDS[@]}")"
 
 execute_command --invalid=handle_action_command "$cmd" CMD_ "${CMDS[*]}" "$@"

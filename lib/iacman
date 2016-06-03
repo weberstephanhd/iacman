@@ -32,7 +32,7 @@ cleanup()
   if [ -d "$TMP"  ] && [ ${opts[keep]+set} ]; then
     confirm "generation data kept in '$TMP'"
   else
-    rm -Rf $TMP
+    rm -Rf "$TMP"
   fi
 }
 
@@ -991,7 +991,7 @@ _map_name()
 
 # $1: name
 # $2: gen dir
-_generate_context()
+_generate_imports()
 {
   local i
   local a
@@ -1016,7 +1016,13 @@ _generate_context()
       fi
     done 
   } >"$2/$1/$GEN_IMP"
+}
 
+# $1: name
+# $2: gen dir
+_generate_context()
+{
+  _generate_imports "$@"
   #confirm "$(cat "$2/$1/$GEN_IMP")"
   __generate_context "$1" "$2/$1"
 }
@@ -1219,17 +1225,20 @@ _handlePublish()
   fi
 }
 
-# $1: name
-# $2; dir
-generate_context()
+# $1: deployment name
+# $2: tmp dir
+# [$3]: X= inculde  initial
+_generate_closure()
 {
-  local publish="${3:-_publish}"
-  local imps=( )
+  imps=( )
   if ! import_closure imps "$1"; then
     list_array __missing dumpargs_err
     return 1
   fi
-  log info "context for $1: ${imps[@]}"
+  log info "dependencies for $1: ${imps[@]}"
+  if [ -n "$3" ] && ! contains "$1" "${imps[@]}"; then
+    imps+=( "$1" )
+  fi
   _generate_list "$2" "${imps[@]}"
   if has_cycle imports "$1"; then
     log hint "  cycle detected"
@@ -1239,6 +1248,29 @@ generate_context()
       _generate_list "$2" "${imps[@]}"
     done
   fi
+}
+
+# $1: name
+# $2; dir
+generate_imports()
+{
+  local imps=( )
+  _generate_closure "$@"
+  if ! contains "$1" "${imps[@]}"; then
+    log info "generating imports for $1"
+    _generate_imports "$@"
+  fi
+
+  _handlePublish "$1" "$2" _publish
+}
+
+# $1: name
+# $2; dir
+generate_context()
+{
+  local publish="${3:-_publish}"
+  local imps=( )
+  _generate_closure "$@"
   if ! contains "$1" "${imps[@]}"; then
     log info "generating context for $1"
     _generate_context "$@"
@@ -1252,23 +1284,7 @@ generate_context()
 generate_exports()
 {
   local imps=( )
-  if ! import_closure imps "$1"; then
-    list_array __missing dumpargs_err
-    return 1
-  fi
-  log info "exports for $1: ${imps[@]}"
-  if ! contains "$1" "${imps[@]}"; then
-    imps+=( "$1" )
-  fi
-  _generate_list "$2" "${imps[@]}"
-  if has_cycle imports "$1"; then
-    log hint "  cycle detected"
-    local mod=X
-    while [ -n "$mod" ]; do
-      log info "regenerate cycle"
-      _generate_list "$2" "${imps[@]}"
-    done
-  fi
+  _generate_closure "$@" X
 
   _handlePublish "$1" "$2" _publish
 }

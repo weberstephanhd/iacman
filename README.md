@@ -648,7 +648,15 @@ The general syntax is
 
 Additionally there are several shortcuts of the form `iac<sub>` (for exaple iacls).
 
-Any subcommand may be abbreviated (for example `manifest` -> `man`). The
+General options to nearly all sub commands are:
+
+- `-q` omit additional information output
+- `-k` keep folder with temporary generation data
+- `-S` show spiff commands
+- `-D` show debug output
+- `-d <name>` set deployment name
+
+Any sub command may be abbreviated (for example `manifest` -> `man`). The
 following sub commands are supported:
 
 - `ls [<dir>]`
@@ -673,17 +681,22 @@ following sub commands are supported:
   * `landscape`: the root directory of the landscape
   The above keys may be abbreviated.
 
+- `imports [<deployment name>]`
+  generate the imports for the given deployment. This is the basis for
+  using option `-l` to execute actions with locally cached information
+  instead of recalculating the colmplete dependency closure.
+
 - `context [<deployment name>]`
   generate the context for the given deployment.
 
--  `manifest [<deplyoment name>]`
-   generate the deployment manifest for the given deployment.
+- `manifest [<deplyoment name>]`
+  generate the deployment manifest for the given deployment.
 
--  `exports [<deplyoment name>]`
-   generate the export contract for the given deployment.
+- `exports [<deplyoment name>]`
+  generate the export contract for the given deployment.
 
 - `order [<deployment name>|all]`
-   determine a valid deployment order for the given deployment(s).
+  determine a valid deployment order for the given deployment(s).
 
 -  `action <action name>`
    call named action for the given deployment. The deployment can be specified
