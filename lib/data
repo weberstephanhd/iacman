@@ -6,6 +6,16 @@ declare -Ag __arrays
 declare -Ag __array_exists
 __array_cnt=0
 
+# $1: target
+# $2: source
+assign_hash()
+{
+  local assign="$(declare -p $2)"
+  assign="${assign#*=\'}"
+  assign="$1=${assign%\'}"
+  eval $assign
+}
+
 # $1: varname
 # $2: name
 # $3: key
@@ -17,6 +27,24 @@ _get_array()
     if [ -n "${__array_exists[$var]+x}" ]; then
       local get="$1=( \"\${$var[@]}\" )"
       eval $get
+    else
+      return 1
+    fi
+  else
+    return 1
+  fi
+}
+
+# $1: varname
+# $2: name
+# $3: key
+_get_hash()
+{
+  local id=${__arrays[$2]}
+  if [ -n "$id" ]; then
+    local var="${id}__$3"
+    if [ -n "${__array_exists[$var]+x}" ]; then
+      assign_hash "$1" "$var"
     else
       return 1
     fi
@@ -63,6 +91,24 @@ _set_array()
   fi
   #debug "$assign"
   eval $assign
+  __array_exists[$var]=X
+}
+
+# $1: name
+# $2: key 
+# $3: var
+_set_hash()
+{
+  local id=${__arrays[$1]}
+  if [ -z "$id" ]; then
+    id="__array_$__array_cnt"
+    __array_cnt=$(( __array_cnt + 1 ))
+     __arrays[$1]="$id"
+  fi
+
+  local var="${id}__$2"
+  eval declare -Ag "$var"
+  assign_hash "$var" "$3"
   __array_exists[$var]=X
 }
 

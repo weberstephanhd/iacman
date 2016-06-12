@@ -181,15 +181,35 @@ _showHashedDeplList()
   local a=( )
   _get_array a "$1" "$2" || true
   if [ ${#a[@]} -gt 0 ]; then
-    title "  ${3}:"
+    color_title "  ${3}:"
     for i in "${a[@]}"; do
       p="${deplDefs[$i]}"
       if [ -z "$p" ]; then
-        warn "  - $i (undefined)"
+        color_warn "  - $i (undefined)"
       else
-        found "  - $i ($(norm_path "$p"))"
+        color_found "  - $i ($(norm_path "$p"))"
       fi
-    done
+    done | column -t | sed 's/^/  /'
+  fi
+}
+
+_showHashedDeplLabels()
+{
+  local l
+  declare -A a
+  declare -A a
+  _get_hash a "$1" "$2" || true
+  if [ ${#a[@]} -gt 0 ]; then
+    color_title "  ${3}:"
+    for l in "${!a[@]}"; do
+      local d="${a["$l"]}"
+      local p="${deplDefs[$d]}"
+      if [ -z "$p" ]; then
+        color_warn "  - $l: $d (undefined)"
+      else
+        color_found "  - $l: $d ($(norm_path "$p"))"
+      fi
+    done | column -t | sed 's/^/  /'
   fi
 }
 
@@ -203,14 +223,14 @@ showDeployment()
   fi
   if [ -n "$2" ]; then
     if [ -f "$2/$FILE_DEPLOYMENT" ]; then
-      confirm "deployment definition $1"
+      color_confirm "deployment definition $1"
     else
-      confirm "deployment configuration $1"
+      color_confirm "deployment configuration $1"
     fi
   else
-    confirm "deployment definition $1"
+    color_confirm "deployment definition $1"
   fi
-  found "  path: $(norm_path "$p")"
+  color_found "  path: $(norm_path "$p")"
   if [ ! ${deplActive[$1]:+set} ]; then
     color_red "  INACTIVE"
   fi
@@ -220,13 +240,13 @@ showDeployment()
 
   local c="${deplComps[$1]}"
   if [ -z "$c" ]; then
-    warn "no component declared"
+    color_warn "no component declared"
   else
     p="${compDefs[$c]}"
     if [ -z "$p" ]; then
-      warn "  component: $c (undefined)"
+      color_warn "  component: $c (undefined)"
     else
-      found "  component: $c ($(norm_path "$p"))"
+      color_found "  component: $c ($(norm_path "$p"))"
     fi
 
     _showHashedList "$c" compCtxs "component context"
@@ -238,6 +258,8 @@ showDeployment()
   _showHashedDeplList "$1" deplGlmps "glimpses"
 
   _showHashedList "$1" deplIncls " includes"
+
+  _showHashedDeplLabels "$1" deplLabels "imports"
   _showHashedList "$1" deplCtxs "context"
   _showHashedList "$1" deplStubs "stubs" norm_path
 }
@@ -250,16 +272,16 @@ showComponent()
   if [ -z "$p" ]; then
     Error "component $1 not found"
   fi
-  confirm "component $1"
-  found "  path: $(norm_path "$p")"
-  found "  type: ${compTypes[$1]}"
-  found "  manifest: ${compMFs[$1]}"
+  color_confirm "component $1"
+  color_found "  path: $(norm_path "$p")"
+  color_found "  type: ${compTypes[$1]}"
+  color_found "  manifest: ${compMFs[$1]}"
   
   _get_array a "$1" compCtxs || true
   if [ ${#a[@]} -gt 0 ]; then
-    title "  context:"
+    color_title "  context:"
     for i in "${a[@]}"; do
-      found "  - $i"
+      color_found "  - $i"
     done
   fi
 
@@ -267,11 +289,11 @@ showComponent()
     local f=
     while IFS='' read -r d; do
       if [ -z "$f" ]; then
-        title "  deployments"
+        color_title "  deployments"
         f=X
       fi
-      found "  - $d ($(norm_path "${deplDefs[$d]}"))"
-    done
+      color_found "  - $d ($(norm_path "${deplDefs[$d]}"))"
+    done | column -t | sed 's/^/  /'
   )
 }
 

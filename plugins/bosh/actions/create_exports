@@ -1,12 +1,36 @@
 #!/bin/bash -e
 
+SCRIPT_BASE="${SCRIPT_BASE:-$(dirname "${BASH_SOURCE[0]}")}"
+
+WSROOT="${IAC_DEPL_COMP}"
+WSROOT="${WSROOT:-$(iac dir comp)}"
+WSROOT="${WSROOT:-$SCRIPT_BASE/..}"
+
+#LSROOT="${IAC_LS_ROOT:-$(iac dir)}"
+
+CONFIG_DIR="${IAC_DEPL_INST:-$WSROOT}"
+STATE_DIR="${IAC_DEPL_STATE:-$WSROOT}"
+COMP_DIR="${IAC_DEPL_COMP:-$WSROOT}"
+WORK_DIR="${IAC_DEPL_GEN:-$WSROOT}"
+
+GEN_DIR="$CONFIG_DIR/gen"
+
 ACTION_create_exports()
 {
-  if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then
-    "$IAC_ACTION_CREATE_MANIFEST" "$@"
+   
+  if [ -f "$WSROOT/helper/export.yml" ]; then
+    if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then
+      "$IAC_ACTION_CREATE_MANIFEST" "$@"
+    else
+      echo "---"
+    fi | spiff merge "$WSROOT/helper/export.yml" - "$1"
   else
-    cat "$1"
-  fi | yaml2json | jq .exports | spiff merge -
+    if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then
+      "$IAC_ACTION_CREATE_MANIFEST" "$@"
+    else
+      cat "$1"
+    fi | yaml2json | jq .exports | spiff merge -
+  fi
 }
 
 

@@ -93,6 +93,7 @@ p_cfg()
   color_dark "$@"
 }
 
+
 ###########################################################################
 # command line utils
 ###########################################################################
@@ -187,6 +188,10 @@ declare -gA deplCommon  # commom root dir of component and deployment def
 # deplReqs    # imports for deployments
 # deplGlmps   # preview imports for deployments
 # deplInfos   # configuration locations for deployments
+# deplImps    # list of effective imports
+
+# hashed hashes (datatype provided by lib/data)
+# deplLabels  # import label hashes
  
 declare -gA compDefs    # component definitions
 declare -gA compTypes   # component type
@@ -309,6 +314,11 @@ check_deployment()
     return 1
   fi
   [ "${deplActive[$1]}" ]
+}
+
+get_labels()
+{
+  _get_hash "$1" "$2" deplLabels
 }
 
 get_imports()
@@ -456,6 +466,7 @@ _filter_file()
 # $2: name
 lookupStub()
 {
+  debug "lookup stubs for $1: $2"
   local c="${deplComps[$1]}"
   local dr="$(_elemRoot "$1" "${deplDefs[$1]}")"
   if [ -n "$c" ]; then
@@ -469,7 +480,7 @@ lookupStub()
   fi
 
   
-  _get_array a "$i" deplIncls || true
+  _get_array a "$1" deplIncls || true
   for i in "${a[@]}"; do
     _filter_file "$i/$DIR_CONFIG/$2"
   done
@@ -545,7 +556,7 @@ lookupStubs()
   stubs=( )
   for c in "${@:2}"; do
     debug " using context $c"
-    _get_list < <(lookupStub "$1" "$c")
+    _read_list < <(lookupStub "$1" "$c")
     if [ "${#res[@]}" -eq 0 ]; then
       warn "context $c not found for $1"
     else
@@ -737,7 +748,7 @@ _scanModule()
 
 #
 # res: result array
-_get_list()
+_read_list()
 {
   local line
   res=( )
@@ -746,11 +757,29 @@ _get_list()
   done
 }
 
+#
+# res: result associative array
+_read_hash()
+{
+  local line
+  hash=( )
+  while  read -r label value; do
+    if [ -n "$label" ]; then
+      hash["$label"]="$value"
+    fi
+  done
+}
+
 # $1: expr
 # res: result array
 _get_yaml_list()
 {
-  _get_list < <(get_yaml_field - "$1")
+  _read_list < <(get_yaml_field - "$1")
+}
+
+_get_yaml_labeled_list()
+{
+  _read_hash < <(yaml2json | jq -r $1' | if type == "object" then . as $m | keys[] | [.,$m[.]] else if type == "array" then .[] | if type == "object" then . as $m | keys[] | [.,$m[.]] else [.,.] end else empty end end | join("  ")')
 }
 
 readComponentType()
@@ -776,6 +805,7 @@ setupComponent()
       def="$(spiff merge -- "$IAC_PLUGINS/$type/$FILE_COMPONENT" - <<<"$def")"
     fi
 
+    local res=( )
     debug " analyse context..."
     _get_yaml_list '.context[]' <<<"$def"
     debug " context ${res[@]}"
@@ -800,24 +830,12 @@ setupDeployment()
   local ctxs=( )
   local stubs=( )
   local root="${deplDefs["$1"]}"
+  local res=( )
+  local i
+  declare -A hash
 
   debug " analyse descriptor..."
   local def="$(cat "$root/$FILE_DEPLOYMENT")"
-  _get_yaml_list '.["descriptor-context"][]' <<<"$def"
-  debug "found descriptor context: ${res[@]}"
-  _set_array "$1" deplDCtxs "${res[@]}"
-  if [ ${#res[@]} -gt 0 ]; then
-    lookupStubs "$1"  "${res[@]}"
-    _set_array "$1" deplDStubs "${stubs[@]}"
-    if [ ${#stubs[@]} -gt 0 ]; then
-      if [ -n "${opts[spiff]+x}" ]; then
-        log info spiff merge "$root/$FILE_DEPLOYMENT" "${stubs[@]}"
-      fi
-      def="$(spiff merge - "${stubs[@]}" <<<"$def" || Error "descriptor processing for $1 failed")"
-    fi
-  else
-    _set_array "$1" deplDStubs
-  fi
 
   local comp="$(get_yaml_field - .component <<<"$def")"
   if [ -z "$comp" ]; then
@@ -836,6 +854,22 @@ setupDeployment()
   fi
   deplComps[$1]="$comp"
 
+  _get_yaml_list '.["descriptor-context"][]' <<<"$def"
+  debug "found descriptor context: ${res[@]}"
+  _set_array "$1" deplDCtxs "${res[@]}"
+  if [ ${#res[@]} -gt 0 ]; then
+    lookupStubs "$1"  "${res[@]}"
+    _set_array "$1" deplDStubs "${stubs[@]}"
+    if [ ${#stubs[@]} -gt 0 ]; then
+      if [ -n "${opts[spiff]+x}" ]; then
+        log info spiff merge "$root/$FILE_DEPLOYMENT" "${stubs[@]}"
+      fi
+      def="$(spiff merge - "${stubs[@]}" <<<"$def" || Error "descriptor processing for $1 failed")"
+    fi
+  else
+    _set_array "$1" deplDStubs
+  fi
+
   local active="$(get_yaml_field - .active <<<"$def")"
   if [ -z "$active" -o "$active" == true ]; then
     active=X
@@ -844,25 +878,51 @@ setupDeployment()
   fi
   deplActive[$1]="$active"
 
-  local res=( )
   debug " analyse imports..."
-  _get_yaml_list '.requires[]' <<<"$def"
+
+  declare -A implabels
+  declare -A implabels # if the second line is deleted, the array is not defined ???????
+
+  _get_yaml_labeled_list '.requires' <<<"$def"
+  res=( )
+  for i in "${!hash[@]}"; do
+    local d="${hash["$i"]}"
+    local l="$(_map_name "$i")"
+    if ! contains "$d" "${res[@]}"; then
+      res+=( "$d" )
+    fi
+    if [ ${implabels["$l"]+set} ]; then
+      warn "label '$l' already defined for deployment $1"
+    else
+      implabels["$l"]="$d"
+    fi
+  done
+  
   debug " requires ${res[@]}"
   _set_array "$1" deplReqs "${res[@]}"
 
-  local filtered=( )
-  local reqs=( "${res[@]}" )
   debug " analyse glimpses..."
-  _get_yaml_list '.glimpses[]' <<<"$def"
-  for i in "${res[@]}"; do
-    if ! contains "$i" "${reqs[@]}"; then
-      filtered+=( "$i" )
-      reqs+=( "$i" )
+  local filtered=( )
+  _get_yaml_labeled_list '.glimpses' <<<"$def"
+  debug "-> $(declare -p hash)"
+  for i in "${!hash[@]}"; do
+    local d="${hash["$i"]}"
+    local l="$(_map_name "$i")"
+    if ! contains "$d" "${res[@]}"; then
+      res+=( "$d" )
+      filtered+=( "$d" )
+    fi
+    if [ ${implabels["$l"]+set} ]; then
+      warn "label '$l' already defined for deployment $1"
+    else
+      implabels["$l"]="$d"
     fi
   done
+
   debug " glimpses ${filtered[@]}"
   _set_array "$1" deplGlmps "${filtered[@]}"
-  _set_array "$1" deplImps "${reqs[@]}"
+  _set_array "$1" deplImps "${res[@]}"
+  _set_hash "$1" deplLabels implabels
 
   debug " analyse includes..."
   _get_yaml_list '.includes[]' <<<"$def"
@@ -993,10 +1053,12 @@ _map_name()
 # $2: gen dir
 _generate_imports()
 {
+  local l
   local i
   local a
   local t
-  local imps=( )
+  declare -A labels
+  declare -A imps
 
   t="$(require_deployment "$1")"
 
@@ -1006,11 +1068,16 @@ _generate_imports()
   mkdir -p "$2/$1"
   {
     echo "imports:"
-    get_imports imps "$1"
-    for i in "${imps[@]}"; do
+    get_labels labels "$1"
+    for l in "${!labels[@]}"; do
+      i="${labels["$l"]}"
       if [ -f "$2/$i/$GEN_EXP" ]; then
-        echo "  $(_map_name "$i"): $(yaml2json <"$2/$i/$GEN_EXP")"
-        log title "    imp $i: $(md5sum "$2/$i/$GEN_EXP")"
+        echo "  # import of deployment $i"
+        echo "  $l: $(yaml2json <"$2/$i/$GEN_EXP")"
+        if [ ${imps["$i"]:-unset} ]; then
+          log title "    imp $i: $(md5sum "$2/$i/$GEN_EXP")"
+          imps["$i"]=X
+        fi
       else
         log warn "    no import for $i"
       fi
