@@ -92,6 +92,10 @@ p_cfg()
 {
   color_dark "$@"
 }
+p_tmpldef()
+{
+  color_light "$@"
+}
 
 
 ###########################################################################
@@ -177,22 +181,31 @@ get_component_deployments()
 declare -gA modDefs     # module definition locations
 declare -gA deplDefs    # deployment definition locations
 declare -gA deplComps   # deployment component for deployment
+declare -gA deplTmpls   # deployment template for deployment
 declare -gA deplActive  # active flag for deployment
 declare -gA deplCommon  # commom root dir of component and deployment def
 ### hashed arrays (datatype provided by lib/data)
 # deplCtxs    # contexts for deployments
 # deplDCtxs   # descriptor contexts for deployments
+# deplECtxs   # effective contexts for deployments
 # deplIncls   # modules included in search path
 # deplStubs   # effective stubs for deployments
 # deplDStubs  # effective descriptor stubs for deployments
 # deplReqs    # imports for deployments
+# deplEReqs   # effective imports for deployments
 # deplGlmps   # preview imports for deployments
+# deplEGlmps  # effective preview imports for deployments
 # deplInfos   # configuration locations for deployments
 # deplImps    # list of effective imports
 
 # hashed hashes (datatype provided by lib/data)
 # deplLabels  # import label hashes
  
+declare -gA tmplDefs    # deployment template locations
+declare -gA tmplDone    # deployment template setup done
+declare -gA tmplComps   # deployment coponent for template
+declare -gA tmplTmpls   # deployment template for template
+
 declare -gA compDefs    # component definitions
 declare -gA compTypes   # component type
 declare -gA compMFs     # component manifest
@@ -328,12 +341,12 @@ get_imports()
 
 get_glimpses()
 {
-  _get_array "$1" "$2" deplGlmps
+  _get_array "$1" "$2" deplEGlmps
 }
 
 get_required()
 {
-  _get_array "$1" "$2" deplReqs
+  _get_array "$1" "$2" deplEReqs
 }
 
 get_stubs()
@@ -387,11 +400,13 @@ DIR_STATE=state
 
 DIR_DEPLOYMENTS=deployments
 DIR_MODULES=modules
+DIR_TEMPLATES=templates
 DIR_COMPONENTS=components
 DIR_CONFIG=config
 
 FILE_COMPONENT=component.yml
 FILE_DEPLOYMENT=deployment.yml
+FILE_TEMPLATE=template.yml
 
 GEN_EXP=exp.yml
 GEN_IMP=imp.yml
@@ -488,6 +503,16 @@ lookupStub()
   _lookupTree "$1" "$2" "${deplDefs[$1]}" "/" "$DIR_DEPLOYMENTS/$1" "$DIR_CONFIG"
 }
 
+# $1: element name
+# $2: config name
+# $3: start dir
+lookupConfig()
+{
+  debug "lookup config for $1: $2"
+  local dr="$1"
+  _lookupTree "$1" "$2" "$3" "/" "$DIR_CONFIG"
+}
+
 _commonRoot()
 {
   local parts=( )
@@ -566,6 +591,25 @@ lookupStubs()
   done
 }
 
+# $1: element name
+# $2: element dir
+# $3+: name
+lookupConfigs()
+{
+  local c
+  stubs=( )
+  for c in "${@:3}"; do
+    debug " using context $c"
+    _read_list < <(lookupConfig "$1" "$c" "$2")
+    if [ "${#res[@]}" -eq 0 ]; then
+      warn "context $c not found for $1"
+    else
+      debug "   found $(norm_path "${res[@]}")"
+      stubs+=( "${res[@]}" )
+    fi
+  done
+}
+
 scan()
 {
   _scanModule "$@"
@@ -634,6 +678,44 @@ _scanComponents()
     else
       for i in "$dir"/*; do
         if [ -d "$i" ]; then
+          queue+=( "$i" )
+        fi
+      done
+    fi
+  done
+}
+
+_scanTemplates()
+{
+  local p
+  local i
+  if [ "$1" == -p ]; then
+    p=$1
+    shift
+  fi
+  local queue=( "$1" )
+  local base="$1"
+  while [ "${#queue[@]}" -gt 0 ]; do
+    local dir="${queue[0]}"
+    local name="${dir#$base}"
+    name="${name##/}"
+    queue=( "${queue[@]:1}" )
+
+    debug "scanning dir $(norm_path "$dir") ($name)"...
+    if [ -n "$name" ] && _check_files "$dir/$FILE_TEMPLATE" ; then
+      if [ ${tmplDefs[$name]+set} ]; then
+        log warn " ignoring duplicate deployment template $name at $(norm_path "$dir")"
+      else
+        debug " found deployment template $name at $(norm_path "$dir")"
+        tmplDefs["$name"]="$dir"
+
+        if [ -n "$p" ]; then
+          p_tmpldef "$2  deployment template $name"
+        fi
+      fi
+    else
+      for i in "$dir"/*; do
+        if [ -d "$i"  -a "$(basename "$i")" != gen ]; then
           queue+=( "$i" )
         fi
       done
@@ -719,6 +801,9 @@ _scanModule()
 
   if [ -d "$1/$DIR_COMPONENTS" ]; then
     _scanComponents $p "$1/$DIR_COMPONENTS" "$2"
+  fi
+  if [ -d "$1/$DIR_TEMPLATES" ]; then
+    _scanTemplates $p "$1/$DIR_TEMPLATES" "$2"
   fi
   declare -A _depls
   if [ -d "$1/$DIR_DEPLOYMENTS" ]; then
@@ -824,6 +909,200 @@ setupComponent()
   fi
 }
 
+# $1: element name
+# $2: descriptor file
+# $3: type key
+# $4: type name 
+# $5+: template history
+_setupElement()
+{
+  local a_n="$1"
+  local a_d="$2"
+  local a_k="$3"
+  local a_t="$4"
+
+  local ctxs=( )
+  local root
+  local res=( )
+  local i
+  declare -A hash
+
+  eval root=\"\${${a_k}Defs[\"\$a_n\"]}\"
+
+  debug " analyse descriptor..."
+  local def="$(cat "$root/$a_d")"
+
+  _get_yaml_list '.["descriptor-context"][]' <<<"$def"
+  debug "found descriptor context: ${res[@]}"
+  _set_array "$1" ${a_k}DCtxs "${res[@]}"
+  if [ ${#res[@]} -gt 0 ]; then
+    lookupConfigs "$a_n" "$root" "${res[@]}"
+    _set_array "$a_n" ${a_k}DStubs "${stubs[@]}"
+    if [ ${#stubs[@]} -gt 0 ]; then
+      if [ -n "${opts[spiff]+x}" ]; then
+        log info spiff merge "$root/$a_d" "${stubs[@]}"
+      fi
+      def="$(spiff merge - "${stubs[@]}" <<<"$def" || Error "descriptor processing for $1 failed")"
+    fi
+  else
+    _set_array "$a_n" ${a_k}DStubs
+  fi
+
+  declare -A implabels
+  declare -A implabels # if the second line is deleted, the array is not defined ???????
+
+  local rlabels=( )
+  local glabels=( )
+
+  local comp="$(get_yaml_field - .component <<<"$def")"
+  local tmpl="$(get_yaml_field - .template <<<"$def")"
+  if [ -z "$comp" ]; then
+    if [ -z "$tmpl" ]; then
+      log warn " no component or template defined for $a_t $a_n"
+    else
+      local troot="${tmplDefs["$tmpl"]}"
+      if [ -z "$troot" ]; then
+        log warn " template $tmpl for $a_t $a_n not defined"
+      else
+        _setupTemplate "$tmpl" "${@:5}" 
+        debug " using template $tmpl"
+        eval "${a_k}Tmpls[\"\$a_n\"]=\"\$tmpl\""
+        eval "comp=\"\${${a_k}Comps[\"\$tmpl\"]}\""
+        if [ -z "$comp" ]; then
+          log warn " no component defined for $a_t $a_n because template $tmpl defines no component"
+        fi
+        debug " refering to component $comp"
+        _get_hash implabels "$tmpl" tmplLabels
+        _get_array rlabels "$tmpl" tmplRLab
+        _get_array glabels "$tmpl" tmplGLab
+        _get_array ctxs "$tmpl" tmplECtxs
+        debug " template contexts: ${ctxs[@]}"
+      fi
+    fi
+  else
+    if [ -n "$tmpl" ]; then
+      log warn " ignoring template for $a_t $a_n because it alreday defines a component"
+    fi
+    debug " using component $comp"
+    _get_array ctxs "$comp" compCtxs
+    debug " component contexts: ${ctxs[@]}"
+  fi
+
+  if [ -n "$comp" ]; then
+    local croot="${compDefs["$comp"]}"
+    if [ -z "$croot" ]; then
+      log warn " component $comp for $a_t $a_n not defined"
+    fi
+  fi
+  eval "${a_k}Comps[\"\$a_n\"]=\"\$comp\""
+
+  debug " analyse imports..."
+
+  declare -A found
+  _get_yaml_labeled_list '.requires' <<<"$def"
+  for i in "${!hash[@]}"; do
+    local d="${hash["$i"]}"
+    local l="$(_map_name "$i")"
+    found["$l"]="$d"
+    implabels["$l"]="$d"
+    if ! contains "$l" "${rlabels[@]}"; then
+      rlabels+=( "$l" )
+    fi
+  done
+  debug " requires ${found[@]}"
+  _set_array "$a_n" ${a_k}Reqs "${found[@]}"
+  
+  res=( )
+  for i in "${rlabels[@]}"; do
+    local d="${implabels["$i"]}"
+    if ! contains "$d" "${res[@]}"; then
+      res+=( "$d" )
+    fi
+  done
+  debug " requires (effective) ${res[@]}"
+  _set_array "$a_n" ${a_k}EReqs "${res[@]}"
+
+  debug " analyse glimpses..."
+  found=( )
+  _get_yaml_labeled_list '.glimpses' <<<"$def"
+  for i in "${!hash[@]}"; do
+    local d="${hash["$i"]}"
+    local l="$(_map_name "$i")"
+    if ! contains "$l" "${rlabels[@]}"; then
+      if ! contains "$l" "${glabels[@]}"; then
+        glabels+=( "$l" )
+      fi
+      implabels["$l"]="$d"
+      found["$l"]="$d"
+    else
+      if [ ${found["$l"]+set} ]; then
+        warn "ignoring label '$l': already defined for $a_t $a_n"
+      fi
+    fi
+  done
+  debug " glimpses ${found[@]}"
+  _set_array "$a_n" ${3}Glmps "${found[@]}"
+
+  local filtered=( )
+  for i in "${glabels[@]}"; do
+    local d="${implabels["$i"]}"
+    if ! contains "$d" "${filtered[@]}"; then
+      filtered+=( "$d" )
+      if ! contains "$d" "${res[@]}"; then
+        res+=( "$d" )
+      fi
+    fi
+  done
+  debug " glimpses ${filtered[@]}"
+  _set_array "$a_n" ${3}Glmps "${filtered[@]}"
+
+  debug " imports ${res[@]}"
+  _set_array "$a_n" ${3}Imps "${res[@]}"
+  _set_array "$a_n" ${3}RLab "${rlabels[@]}"
+  _set_array "$a_n" ${3}GLab "${glabels[@]}"
+  _set_hash "$a_n" ${3}Labels implabels
+
+  debug " analyse includes..."
+  _get_yaml_list '.includes[]' <<<"$def"
+  debug " includes ${res[@]}"
+  _set_array "$a_n" ${a_k}Incls "${res[@]}"
+  for i in "${res[@]}"; do
+    local m="${modDefs[$i]}"
+    if [ -z "$m" ]; then
+      log warn " module $i for $a_t $a_n not defined"
+    fi
+  done
+
+  debug " analyse context..."
+  _get_yaml_list '.context[]' <<<"$def"
+  debug " context ${res[@]}"
+  _set_array "$a_n" ${a_k}Ctxs "${res[@]}"
+
+  set_array res uniq "${ctxs[@]}" "${res[@]}"
+  debug " effective context ${res[@]}"
+  _set_array "$a_n" ${3}ECtxs "${res[@]}"
+}
+
+# $1: name
+setupTemplate()
+{
+  _setupTemplate "$1"
+}
+
+# $1: name
+# $2+: history
+_setupTemplate()
+{
+  if contains "$@"; then
+    Error "deployment template cycle for $1: ${*:2}"
+  fi
+  if [ -n "${tmplDone["$1"]}" ]; then
+    return
+  fi
+  tmplDone["$1"]=X
+  _setupElement "$1" $FILE_TEMPLATE tmpl "deployment template" "$@"
+}
+
 # $1: depl name
 setupDeployment()
 {
@@ -900,6 +1179,7 @@ setupDeployment()
   
   debug " requires ${res[@]}"
   _set_array "$1" deplReqs "${res[@]}"
+  _set_array "$1" deplEReqs "${res[@]}"
 
   debug " analyse glimpses..."
   local filtered=( )
@@ -921,6 +1201,7 @@ setupDeployment()
 
   debug " glimpses ${filtered[@]}"
   _set_array "$1" deplGlmps "${filtered[@]}"
+  _set_array "$1" deplEGlmps "${filtered[@]}"
   _set_array "$1" deplImps "${res[@]}"
   _set_hash "$1" deplLabels implabels
 
@@ -957,12 +1238,17 @@ setupEnv()
   
   DROOT=
   DNAME=
+  TROOT=
+  TNAME=
   CROOT=
   CNAME=
   MROOT=
   MNAME=
 
-  if [ -d "$d/$DIR_DEPLOYMENTS" -o -d "$d/$DIR_MODULES" ]; then
+  if [ -d "$d/$DIR_DEPLOYMENTS" -o \
+       -d "$d/$DIR_COMPONENTS" -o \
+       -d "$d/$DIR_TEMPLATES" -o \
+       -d "$d/$DIR_MODULES" ]; then
     MROOT="$d" 
   fi
   while [ -z "$MROOT" -a "$d" != "/" ]; do
@@ -970,7 +1256,6 @@ setupEnv()
     p="$(dirname "$d")"
     if _check_files "$d"/*.yml "$d/gen"; then
       r="$d"
-      names=( )
     fi
     case "$n" in
       $DIR_DEPLOYMENTS) 
@@ -979,6 +1264,7 @@ setupEnv()
           DROOT="$d/$DNAME"
           log found "Found deployment $DNAME at $DROOT"
         fi
+        names=( )
         MROOT="$p";;
       $DIR_COMPONENTS) 
         if [ -n "$r" ]; then
@@ -986,6 +1272,15 @@ setupEnv()
           CROOT="$d/$CNAME"
           log found "Found component $CNAME at $CROOT"
         fi
+        names=( )
+        MROOT="$p";;
+      $DIR_TEMPLATES) 
+        if [ -n "$r" ]; then
+          TNAME="$(_get_path "${names[@]}")"
+          TROOT="$d/$TNAME"
+          log found "Found template $TNAME at $TROOT"
+        fi
+        names=( )
         MROOT="$p";;
       $DIR_MODULES) 
         if [ -n "$l" ]; then
@@ -994,7 +1289,8 @@ setupEnv()
           log found "Found module $l"
         else
           MROOT="$(dirname "$d")" 
-        fi;;
+        fi
+        names=( );;
       *)
         l="$n"
         names+=( "$n" )
@@ -1037,6 +1333,7 @@ cacheAll()
   scan "$LROOT"
 
   setupType component "${!compDefs[@]}"
+  setupType template "${!tmplDefs[@]}"
   setupType deployment "${!deplDefs[@]}"
 }
 

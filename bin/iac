@@ -32,12 +32,16 @@ CMD_directory()
     echo "$LROOT"
   else
     local n
-    local type="$(resolve_shortcut "$1" landscape deployment component module config)"
+    local type="$(resolve_shortcut "$1" landscape deployment template component module config)"
     case "$type" in
       deployment)
         cacheAll
         n="$(require_deplname)"
         echo "${deplDefs[$n]}";;
+      template)
+        cacheAll
+        n="$(require_tmplname)"
+        echo "${tmplDefs[$n]}";;
       state)
         cacheAll
         n="$(require_deplname)"
@@ -133,6 +137,9 @@ CMD_ls()
     if [ -n "$CROOT" ]; then
       found "component $CNAME"
     fi
+    if [ -n "$TROOT" ]; then
+      found "template $TNAME"
+    fi
     if [ -n "$DROOT" ]; then
       if [ -f "$DROOT/$FILE_DEPLOYMENT" ]; then
         found "deployment definition for $DNAME"
@@ -211,6 +218,60 @@ _showHashedDeplLabels()
       fi
     done | column -t | sed 's/^/  /'
   fi
+}
+
+showTemplate()
+{
+  local i
+  local a=( )
+  local p="${tmplDefs[$1]}"
+  if [ -z "$p" ]; then
+    Error "deployment template $1 not found"
+  fi
+  color_confirm "deployment template $1"
+  color_found "  path: $(norm_path "$p")"
+
+  _showHashedList "$1" tmplDCtxs "descriptor context"
+  _showHashedList "$1" tmplDStubs "descriptor stubs" norm_path
+
+  local t="${tmplTmpls[$1]}"
+  if [ -n "$t" ]; then
+    color_title "  templates:" 
+  fi
+  while [ -n "$t" ]; do
+    p="${tmplDefs[$t]}"
+    if [ -z "$p" ]; then
+      color_warn "  - $t (undefined)"
+    else
+      color_found "  - $t ($(norm_path "$p"))"
+    fi
+    t="${tmplTmpls[$t]}"
+  done
+  local c="${tmplComps[$1]}"
+  if [ -z "$c" ]; then
+    color_warn "no component declared"
+  else
+    p="${compDefs[$c]}"
+    if [ -z "$p" ]; then
+      color_warn "  component: $c (undefined)"
+    else
+      color_found "  component: $c ($(norm_path "$p"))"
+    fi
+    _showHashedList "$c" compCtxs "component context"
+  fi
+
+  _showHashedList "$1" tmplInfos "configurations" norm_path
+
+  _showHashedDeplList "$1" tmplReqs "requires"
+  _showHashedDeplList "$1" tmplEReqs "requires (effective)"
+  _showHashedDeplList "$1" tmplGlmps "glimpses"
+  _showHashedDeplList "$1" tmplEGlmps "glimpses (effective)"
+
+  _showHashedList "$1" tmplIncls " includes"
+
+  _showHashedDeplLabels "$1" tmplLabels "effective imports"
+  _showHashedList "$1" tmplCtxs "context"
+  _showHashedList "$1" tmplECtxs "effective context"
 }
 
 showDeployment()
@@ -313,7 +374,9 @@ listModule()
     declare -A deplDefs    # deployment definition locations
     declare -A deplComps   # deployment component for deployment
     declare -A deplActive  # active flag for deployment
-    declare -A compDefs   # component defintions
+    declare -A tmplDefs    # template defintions
+    declare -A tmplComps   # component for template
+    declare -A compDefs    # component defintions
     scan -p "$p"
   )
 }
@@ -327,10 +390,13 @@ CMD_show()
     if [ -n "$CROOT" ]; then
       showComponent "$CNAME"
     fi
+    if [ -n "$TROOT" ]; then
+      showTemplate "$TNAME"
+    fi
     if [ -n "$DROOT" ]; then
       showDeployment "$DNAME" "$DROOT"
     fi
-    if [ -z "$CROOT" -a -z "$DROOT" -a -n "$MROOT" ]; then
+    if [ -z "$CROOT" -a -z "$TROOT" -a -z "$DROOT" -a -n "$MROOT" ]; then
       if [ -z "$MNAME" ]; then
         found "landscape root"
       else
@@ -340,10 +406,12 @@ CMD_show()
     fi
   else
     if [ $# -eq 2 ]; then
-      local type="$(resolve_shortcut "$1" deployment component module)"
+      local type="$(resolve_shortcut "$1" deployment template component module)"
       case "$type" in 
         deployment)
           showDeployment "$2";;
+        template)
+          showTemplate "$2";;
         component)
           showComponent "$2";;
         module)
@@ -595,10 +663,10 @@ if [ \( "$cmd" == iac -a -z "$1" \) -o "$1" == help -o "$1" == "--help" -o "$1" 
   found
   found "Commands:"
   found "  ls [<dir>]                                  list landscape/module structure"
-  found "  directory [deployment|component|module|landscape|config"]
+  found "  directory [deployment|template|component|module|landscape|config"]
   found "                                              show dedicted derived directory"
   found "                                              based on current working directory"
-  found "  show [[component|deployment|module] <name>] details for dedicated element"
+  found "  show [[component|template|deployment|module] <name>] details for dedicated element"
   found "  closure [<name>]                            dependency closure"
   found "  imports                                     generate imports"
   found "  context                                     generate context"
