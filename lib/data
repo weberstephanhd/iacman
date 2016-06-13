@@ -6,6 +6,22 @@ declare -Ag __arrays
 declare -Ag __array_exists
 __array_cnt=0
 
+# $1
+# $2
+equals_array()
+{
+  if eval "[ \${#$1[@]} -ne \${#$2[@]} ]"; then
+    return 1
+  fi
+  local keys=( )
+  eval "keys=( \"\${#$1[@]}\" )"
+  for k in "${keys[@]}"; do
+    if eval "[ \"\${$1[\"$k\"]}\" != \"\${$1[\"$k\"]}\" ]"; then
+      return 1
+    fi
+  done
+}
+
 # $1: target
 # $2: source
 assign_hash()
@@ -14,6 +30,17 @@ assign_hash()
   assign="${assign#*=\'}"
   assign="$1=${assign%\'}"
   eval $assign
+}
+
+# $1: name
+# $2: key1
+# $3: key2
+_equals_array()
+{
+  local id=${__arrays[$1]}
+  if [ -n "$id" ]; then
+    equals_array "${id}__$2" "${id}__$3"
+  fi
 }
 
 # $1: varname

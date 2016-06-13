@@ -220,26 +220,28 @@ _showHashedDeplLabels()
   fi
 }
 
-showTemplate()
+
+# $1: name
+# $2: type key
+_showElement()
 {
-  local i
-  local a=( )
-  local p="${tmplDefs[$1]}"
-  if [ -z "$p" ]; then
-    Error "deployment template $1 not found"
-  fi
-  color_confirm "deployment template $1"
+  local p
+  local t
+  local c
+
+  eval p="\"\${${2}Defs[\"\$1\"]}\""
+
   color_found "  path: $(norm_path "$p")"
 
-  _showHashedList "$1" tmplDCtxs "descriptor context"
-  _showHashedList "$1" tmplDStubs "descriptor stubs" norm_path
+  _showHashedList "$1" ${2}DCtxs "descriptor context"
+  _showHashedList "$1" ${2}DStubs "descriptor stubs" norm_path
 
-  local t="${tmplTmpls[$1]}"
+  eval t="\"\${${2}Tmpls[\"\$1\"]}\""
   if [ -n "$t" ]; then
     color_title "  templates:" 
   fi
   while [ -n "$t" ]; do
-    p="${tmplDefs[$t]}"
+    p="${tmplDefs["$t"]}"
     if [ -z "$p" ]; then
       color_warn "  - $t (undefined)"
     else
@@ -247,7 +249,8 @@ showTemplate()
     fi
     t="${tmplTmpls[$t]}"
   done
-  local c="${tmplComps[$1]}"
+
+  eval c="\"\${${2}Comps[\"\$1\"]}\""
   if [ -z "$c" ]; then
     color_warn "no component declared"
   else
@@ -260,18 +263,34 @@ showTemplate()
     _showHashedList "$c" compCtxs "component context"
   fi
 
-  _showHashedList "$1" tmplInfos "configurations" norm_path
+  _showHashedDeplList "$1" ${2}Reqs "requires"
+  if ! _equals_array "$1" ${2}Reqs ${2}EReqs; then
+    _showHashedDeplList "$1" ${2}EReqs "requires (effective)"
+  fi
+  _showHashedDeplList "$1" ${2}Glmps "glimpses"
+  if ! _equals_array "$1" ${2}Glmps ${2}EGlmps; then
+    _showHashedDeplList "$1" ${2}EGlmps "glimpses (effective)"
+  fi
 
-  _showHashedDeplList "$1" tmplReqs "requires"
-  _showHashedDeplList "$1" tmplEReqs "requires (effective)"
-  _showHashedDeplList "$1" tmplGlmps "glimpses"
-  _showHashedDeplList "$1" tmplEGlmps "glimpses (effective)"
+  _showHashedList "$1" ${2}Incls " includes"
 
-  _showHashedList "$1" tmplIncls " includes"
+  _showHashedDeplLabels "$1" ${2}Labels "effective imports"
+  _showHashedList "$1" ${2}Ctxs "context"
+  if ! _equals_array "$1" ${2}Ctxs ${2}ECtxs; then
+    _showHashedList "$1" ${2}ECtxs "effective context"
+  fi
+}
 
-  _showHashedDeplLabels "$1" tmplLabels "effective imports"
-  _showHashedList "$1" tmplCtxs "context"
-  _showHashedList "$1" tmplECtxs "effective context"
+showTemplate()
+{
+  local i
+  local a=( )
+  local p="${tmplDefs[$1]}"
+  if [ -z "$p" ]; then
+    Error "deployment template $1 not found"
+  fi
+  color_confirm "deployment template $1"
+  _showElement "$1" tmpl
 }
 
 showDeployment()
@@ -291,38 +310,12 @@ showDeployment()
   else
     color_confirm "deployment definition $1"
   fi
-  color_found "  path: $(norm_path "$p")"
   if [ ! ${deplActive[$1]:+set} ]; then
     color_red "  INACTIVE"
   fi
-
-  _showHashedList "$1" deplDCtxs "descriptor context"
-  _showHashedList "$1" deplDStubs "descriptor stubs" norm_path
-
-  local c="${deplComps[$1]}"
-  if [ -z "$c" ]; then
-    color_warn "no component declared"
-  else
-    p="${compDefs[$c]}"
-    if [ -z "$p" ]; then
-      color_warn "  component: $c (undefined)"
-    else
-      color_found "  component: $c ($(norm_path "$p"))"
-    fi
-
-    _showHashedList "$c" compCtxs "component context"
-  fi
-
   _showHashedList "$1" deplInfos "configurations" norm_path
-
-  _showHashedDeplList "$1" deplReqs "requires"
-  _showHashedDeplList "$1" deplGlmps "glimpses"
-
-  _showHashedList "$1" deplIncls " includes"
-
-  _showHashedDeplLabels "$1" deplLabels "imports"
-  _showHashedList "$1" deplCtxs "context"
-  _showHashedList "$1" deplStubs "stubs" norm_path
+  _showElement "$1" depl
+  _showHashedList "$1" deplStubs "effective stubs" norm_path
 }
 
 

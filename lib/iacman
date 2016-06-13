@@ -113,6 +113,15 @@ require_deplname()
   fi
 }
 
+require_tmplname()
+{
+  if [ -n "$1" ]; then
+    echo "$1"
+  else
+    require_default_tmplname template name required
+  fi
+}
+
 deplname_from_args()
 {
   require_default_deplname "not in a deployment -> use option -d to specify deployment name"
@@ -142,6 +151,23 @@ require_default_deplname()
       else
         Error "${ERRCTX}${ERRCTX:+: }$@"
       fi
+    fi
+  fi
+}
+
+# $@: error message
+require_default_tmplname()
+{
+  if [ -n "$TNAME" ]; then
+    echo "$TNAME"
+  else
+    local d
+    d="$(require_default_deplname "$@")"  
+    local t="${deplTmpls["$d"]}"
+    if [ -n "$t" ]; then
+      echo "$t"
+    else
+      Error "${ERRCTX}${ERRCTX:+: }$@"
     fi
   fi
 }
@@ -494,6 +520,7 @@ lookupStub()
      fi
   fi
 
+  lookupTemplateStubs "${deplTmpls[$1]}" "$2"
   
   _get_array a "$1" deplIncls || true
   for i in "${a[@]}"; do
@@ -501,6 +528,20 @@ lookupStub()
   done
 
   _lookupTree "$1" "$2" "${deplDefs[$1]}" "/" "$DIR_DEPLOYMENTS/$1" "$DIR_CONFIG"
+}
+
+# $1: template name
+# $2: context
+# $3+ ref history
+lookupTemplateStubs()
+{
+  if [ -n "$1" ] && ! contains "$1" "${@:3}"; then
+    lookupTemplateStubs "${tmplTmpls[$1]}" "$2" "$1" "${@:3}"
+    local dt="${tmplDefs["$1"]}"
+    if [ -n "$dt" ]; then
+      _filter_file "$dt/$2" || true
+    fi
+  fi
 }
 
 # $1: element name
@@ -914,6 +955,7 @@ setupComponent()
 # $3: type key
 # $4: type name 
 # $5+: template history
+# -> def
 _setupElement()
 {
   local a_n="$1"
@@ -967,7 +1009,7 @@ _setupElement()
         _setupTemplate "$tmpl" "${@:5}" 
         debug " using template $tmpl"
         eval "${a_k}Tmpls[\"\$a_n\"]=\"\$tmpl\""
-        eval "comp=\"\${${a_k}Comps[\"\$tmpl\"]}\""
+        comp="${tmplComps["$tmpl"]}"
         if [ -z "$comp" ]; then
           log warn " no component defined for $a_t $a_n because template $tmpl defines no component"
         fi
@@ -988,8 +1030,9 @@ _setupElement()
     debug " component contexts: ${ctxs[@]}"
   fi
 
+  local croot
   if [ -n "$comp" ]; then
-    local croot="${compDefs["$comp"]}"
+    croot="${compDefs["$comp"]}"
     if [ -z "$croot" ]; then
       log warn " component $comp for $a_t $a_n not defined"
     fi
@@ -1081,6 +1124,13 @@ _setupElement()
   set_array res uniq "${ctxs[@]}" "${res[@]}"
   debug " effective context ${res[@]}"
   _set_array "$a_n" ${3}ECtxs "${res[@]}"
+
+  _handleSetup_$a_k
+}
+
+_handleSetup_tmpl()
+{
+  true
 }
 
 # $1: name
@@ -1100,11 +1150,38 @@ _setupTemplate()
     return
   fi
   tmplDone["$1"]=X
+
   _setupElement "$1" $FILE_TEMPLATE tmpl "deployment template" "$@"
 }
 
 # $1: depl name
 setupDeployment()
+{
+  _setupElement "$1" $FILE_DEPLOYMENT depl "deployment definition"
+}
+
+_handleSetup_depl()
+{
+  local active="$(get_yaml_field - .active <<<"$def")"
+  if [ -z "$active" -o "$active" == true ]; then
+    active=X
+  else 
+    active=
+  fi
+
+  deplActive["$a_n"]="$active"
+  if [ -n "$croot" ]; then
+    deplCommon["$a_n"]="$(_commonRoot "$croot" "$root")"
+  else
+    deplCommon["$a_n"]=""
+  fi
+  local stubs=( )
+  lookupStubs "$a_n"  "${res[@]}"
+  _set_array "$a_n" deplStubs "${stubs[@]}"
+}
+
+# $1: depl name
+OLDsetupDeployment()
 {
   local ctxs=( )
   local stubs=( )
@@ -1115,6 +1192,22 @@ setupDeployment()
 
   debug " analyse descriptor..."
   local def="$(cat "$root/$FILE_DEPLOYMENT")"
+
+  _get_yaml_list '.["descriptor-context"][]' <<<"$def"
+  debug "found descriptor context: ${res[@]}"
+  _set_array "$1" deplDCtxs "${res[@]}"
+  if [ ${#res[@]} -gt 0 ]; then
+    lookupConfigs "$1" "$root" "${res[@]}"
+    _set_array "$1" deplDStubs "${stubs[@]}"
+    if [ ${#stubs[@]} -gt 0 ]; then
+      if [ -n "${opts[spiff]+x}" ]; then
+        log info spiff merge "$root/$FILE_DEPLOYMENT" "${stubs[@]}"
+      fi
+      def="$(spiff merge - "${stubs[@]}" <<<"$def" || Error "descriptor processing for $1 failed")"
+    fi
+  else
+    _set_array "$1" deplDStubs
+  fi
 
   local comp="$(get_yaml_field - .component <<<"$def")"
   if [ -z "$comp" ]; then
@@ -1132,22 +1225,6 @@ setupDeployment()
     fi
   fi
   deplComps[$1]="$comp"
-
-  _get_yaml_list '.["descriptor-context"][]' <<<"$def"
-  debug "found descriptor context: ${res[@]}"
-  _set_array "$1" deplDCtxs "${res[@]}"
-  if [ ${#res[@]} -gt 0 ]; then
-    lookupStubs "$1"  "${res[@]}"
-    _set_array "$1" deplDStubs "${stubs[@]}"
-    if [ ${#stubs[@]} -gt 0 ]; then
-      if [ -n "${opts[spiff]+x}" ]; then
-        log info spiff merge "$root/$FILE_DEPLOYMENT" "${stubs[@]}"
-      fi
-      def="$(spiff merge - "${stubs[@]}" <<<"$def" || Error "descriptor processing for $1 failed")"
-    fi
-  else
-    _set_array "$1" deplDStubs
-  fi
 
   local active="$(get_yaml_field - .active <<<"$def")"
   if [ -z "$active" -o "$active" == true ]; then
@@ -1224,6 +1301,7 @@ setupDeployment()
   set_array res uniq "${ctxs[@]}" "${res[@]}"
   debug " effective context ${res[@]}"
 
+  warn lookup $1: "${res[@]}"
   lookupStubs "$1"  "${res[@]}"
   _set_array "$1" deplStubs "${stubs[@]}"
 }

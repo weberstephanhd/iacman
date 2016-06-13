@@ -105,19 +105,30 @@ concrete deplyoment.
 
 The _wiring_ describes the flow of derived configuration information
 from one component to another. For example, if the deployment of a bosh
-director should report monitoring information to a graphite enpoint the
+director should report monitoring information to a graphite endpoint the
 director deployment must get information about the graphite endpoint, that is
 typically provided by another deployment. This kind of wiring is done
 in the deployment. Therefore a deployment may configure _dependencies_ to
 other deployments. On the other side every deployment may provide _exports_
 describing reusable configuration information used by other deployments to
-build their deployment context. These exports build the contract of a deployment
-that can be used by others. This is definately not the deployment manifest,
-it is an explicitly designed set of configuration information, that should be
-kept as stable as possible during the evolution of a deployment to clearly
-decouple multiple deployments. Iacman analyses the dependencies of a
-deployment and provides access to the appropriate export information as part
-of the context.
+build their deployment context. These exports build the contract of a
+deployment defined by its component that can be used by others. This is
+definately not the deployment manifest, it is an explicitly designed set of
+configuration information, that should be kept as stable as possible during
+the evolution of a component to clearly decouple multiple deployments.
+Iacman analyses the dependencies of a deployment and provides access to the
+appropriate export information as part of the context.
+
+basically the wiring if the mapping among the variation point contract of
+a component and the export contract of dependent deployments.
+
+```
+                 export                        variation point
+                contract                          contract
+                   |                                  |
+      deployment ->|-------->deployment wiring------->|--> component
+                   |                                  |
+```
 
 The task of iacman now is to control these generation processes. The context
 is generated based on formal settings of a deployment. Therefore the deployment
@@ -662,7 +673,7 @@ following sub commands are supported:
 - `ls [<dir>]`
   list the logical landscape structure or the specified sub structure.
 
-- `show [[component|deployment|module|landscape] <element name>]`
+- `show [[component|template|deployment|module|landscape] <element name>]`
   show details for a given element. If no element is specified the element
   represented by the current working directory is used. If no element type
   is specified the element, regardless of its type, with the given name is 
@@ -677,6 +688,7 @@ following sub commands are supported:
   * `state`: the directory of the deployment state in the landscape
   * `gen`: the directory of the private generation directory of the deployment
   * `component`: the directory of the component (of the given deployment)
+  * `template`: the directory of the template
   * `module`: the root directory of the actual module
   * `landscape`: the root directory of the landscape
   The above keys may be abbreviated.
@@ -708,17 +720,33 @@ following sub commands are supported:
 -  `deploy [<deplyoment name>]`
    call deploy action for the given deployment.
 
-Any non-existent sub command name will be interpreted as action name and `iacman`
-tries to call the appropriate action
+Any non-existent sub command name will be interpreted as action name and
+`iacman` tries to call the appropriate action
 
 
 ## Descriptive Elements
 
 ### Components
 
+A component is located below the `components` folder of a module.
+It might have a hierarchical name (for example `iaas/infra`). 
+The component name is directly used as folder path below the `components`
+folder. A component root folder at least hosts a component descriptor
+`component.yml` describing some component features. The optional folder
+`actions` may contain action scripts using the action name as file name.
+Additionally there might be any deep file structure used by the action scripts.
+
+The component descriptor uses the following elements:
+
+| Field | Description |
+| --- | --- |
+| `type` | optional type of the component used to lookup a type plugin. |
+| `manifest` | file name used to store the generated manifest |
+| `context` | list of names used to lookup appropriate files for extending the context |
+
 ### Plugins
 
-Evary component provides actions to execute dedicatd tasks, like export
+Every component provides actions to execute dedicatd tasks, like export
 creation. Logically those actions belong to the component. But the action
 implementation typically does not need to implement dedicated aspects of
 a dedicated deplyoment, because those acpects are separated into the
@@ -739,11 +767,77 @@ and an optionally configured type plugin.
 Additionally the type plugin might contain a `component.yml` that is
 merged with the one specified in the component.
 
+### Templates
+
+Templates are used to define preconfigured outlines of deployment definitions.
+A template might already contain all elements possible for deployments.
+But it does not already define a final deployment, but a sharable part of
+a deployment definition. A deployment definition might either refer to a
+component or a template. If it refers to a template, it shares the settings
+from the template. Templates might also to other templates to refine their
+settings.
+
+A template is located below the `templates` folder of a module.
+It might have a hierarchical name (for example `redis/minimal`). 
+The template name is directly used as folder path below the `templates`
+folder. A template root folder at least hosts a template descriptor
+`template.yml` describing some template features.
+
+The descriptor describes the same elements like a deployment descriptor.
 
 ### Deployments
 
-#### Deployment Definitions
+Deployments are stored below the `deployments`folder of a module.
+They might have a hierarchical names (for example `iaas/infra`). 
+The deployment name is directly used as folder path below the `deployments`
+folder.
 
-#### Deployment Configurations
+There are two flavors of a deployment folder:
+- deployment configurations
+- deployment definitions
+
+A deployment configuration only contains files usedby the context generation.
+The deplyoment configuration located in the landscape (top level) module
+additionally contains a folder `gen` used to store intermediate generated 
+files during the deployment and generation steps.
+
+For every deployment configuration there must be deplyoment definition down
+the module tree. A deployment definition additionally contains a
+deployment descriptor `deployment.yml`.
+
+The deployment descriptor uses the following elements:
+
+| Field | Description |
+| --- | --- |
+| `component` | Name of the component used to implement the deployment |
+| `template` | Name of the template used to implement the deployment.  One of `component` or `template` must be present |
+| `requires` | List of deployment dependencies. Every dependency might be labeled by using a map instead of a flat value. The key field is used as label. Unlabeled entries use there the deployment name as label. In labels the `/` will be replaced by an underscore `_`. |
+| `glimpses`| List of additional dependencies to preview exports before the deployment of the referenced component has to be deployed.  This is used to resolve dependency cycles because of informational dependencies. |
+| `context` | list of file names intended to be added to the context (see below) |
+| `includes` | list of modules that should additionally be uded to lookup context files |
+| `descriptor-context` | file names of files required for evaluation the descriptor itself. The descriptor context is only built by genetric config files found below the module config folders up the module tree.  The descriptor may contain dynaml expressions refering to information stored in the descriptor context |
+
+The effective list of context file names is built by appending the
+component's context, the context defined along the optionally used 
+template chain and the deployment definition.
+
+For every name in this list (in this order) files are located in the
+file system hierrachy, starting from the component, the template chain,
+the up the components module to the common module with the deployment
+definition, optionally the config folders of the included modules
+and then up from the deployment definition up to the root module.
+Thereby the deployment configurations and the config folder are examined.
+If a name is found multiple times the various occurences are all used,
+in the order they are discovered.
+
+The result is a list of effective file names that finally built up the context.
+These files are then spiffed (in the order of the list). So a top level
+file in the `config` folder will have the higest precedence.
+
+Additionally an `import` file is added at the end of the chain. It is generated
+and contains all the exports of the referenced (requires or glimpses) 
+deployments. This file contains a single section `imports` which
+contains fields for every import, the key is the label of the import and
+the value the contents of the export file of the imported deployment.
 
 ## Dependencies and Cycles
