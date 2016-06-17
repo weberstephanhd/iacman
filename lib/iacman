@@ -515,7 +515,8 @@ lookupStub()
      if [ -n "$d" ]; then
         local cr="$(_elemRoot "$c" "$d")"
         local common="${deplCommon[$1]}"
-       _filter_file "$d/templates/$2" || _filter_file "$d/$2" || true
+        local type="${compTypes[$c]}"
+       _filter_file "$d/templates/$2" || _filter_file "$d/$2" || { [ -n "$type" ] && _filter_file "$IAC_PLUGINS/$type/$2"; } || true
        _lookupTree "$c" "$2" "$d" "$common" "$DIR_CONFIG"
      fi
   fi

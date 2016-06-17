@@ -1,2 +1,4 @@
 <<: (( merge ))
 manifest: mapping.yml
+context:
+  - mapping.yml

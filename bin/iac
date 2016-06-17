@@ -128,6 +128,30 @@ CMD_lib()
 # ls
 CMD_ls()
 {
+  local i
+  case "$1" in
+    -d|-c|-t) 
+      setupEnv
+      cacheAll
+      case "$1" in
+        -d)
+          log confirm "deployments"
+          for i in "${!deplDefs[@]}"; do
+            echo "$i"
+          done;;
+        -t)
+          log confirm "templates"
+          for i in "${!tmplDefs[@]}"; do
+            echo "$i"
+          done;;
+        -c)
+          log confirm "components"
+          for i in "${!compDefs[@]}"; do
+            echo "$i"
+          done;;
+      esac
+      return;;
+  esac
   if [ -z "$1" ]; then
     setupEnv
     scan -p "$LROOT"
@@ -342,12 +366,14 @@ showComponent()
   get_component_deployments "$1" | (
     local f=
     while IFS='' read -r d; do
+      color_found "  - $d ($(norm_path "${deplDefs[$d]}"))"
+    done | column -t | while IFS='' read -r d; do
       if [ -z "$f" ]; then
-        color_title "  deployments"
+        color_title "deployments"
         f=X
       fi
-      color_found "  - $d ($(norm_path "${deplDefs[$d]}"))"
-    done | column -t | sed 's/^/  /'
+      echo "$d"
+    done | sed 's/^/  /'
   )
 }
 
@@ -623,7 +649,11 @@ CMD_deploy()
 # $3+: command arguments
 handle_action_command()
 {
-  exec_action "$2" "${@:3}"
+  if [ "$(type -t "$1$2")" == "function" ]; then
+    $1$2 "${@:3}"
+  else
+    exec_action "$2" "${@:3}"
+  fi
 }
 
 ###########################################################################

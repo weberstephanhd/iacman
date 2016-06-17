@@ -119,16 +119,71 @@ the evolution of a component to clearly decouple multiple deployments.
 Iacman analyses the dependencies of a deployment and provides access to the
 appropriate export information as part of the context.
 
-Basically the wiring of the mapping among the variation point contract of
+### Contract Design
+
+Basically the wiring is the mapping among the variation point contract of
 a component and the export contract of dependent deployments.
+`iacman` introduces dedicated elements for dedicated resposibilities
+and therefore offers the opportunity to designexplicit configuration contract
+among tose realms of responsibility. It *offers* the possibility to do so,
+but it does not enforces it.
+
+First of all, there is the component. It can be designed completely 
+independent of any concrete deployment fabric used in a dedicated landscape.
+To do do, it defines a _variation point_ contract, that offers
+all the configuration and variation options in a defined way.
+For bosh deployments, that could, for example, be done sticking to the
+usual `meta` approach for defining properties evaluated during the
+manifest generation.
+
+The next level is the deployment. Ir might be split, for example
+into a deplyoment definition (as part of a product) and a deployment
+configuration, managed by the operator of a dedicated landscape.
+
+The deployment definition then is able to define an operational
+configuration contract, for example for configuring passwords and
+scaling options. This can be done by a different yaml node, for
+example a `config` node. The task of the deployment definition then is
+to map the information coming from the exports of the dependencies
+and the operational configuration settings to the variation point
+contract of the component.
 
 ```
-                 export                        variation point
-                contract                          contract
-                   |                                  |
-      deployment ->|-------->deployment wiring------->|--> component
-                   |                                  |
+                                  landscape
+                                   operator
+                                  deployment
+                                 configuration
+                                      |
+                                      |          OPS
+                                    =====   configuration
+                                      |        contract
+                                      |
+                   ||                 V                ||
+      deployment ->||-------->deployment wiring------->||--> component
+                   ||                                  ||
+                 export                          variation point
+                contract                            contract
 ```
+
+In a more simple design the operational contract and a standard wiring could be
+part of the component. To support flexible deployment wiring the
+labeled dependencies can be used. The standard wiring provided by the component
+works on the existence of dedicated labels. The price for this
+simplification is the coupling of the component with the expected export
+contract of possible deployments satisfying dedicated import labels.
+Only deployments supporting the contract now defined by the component can
+be wired.
+
+In a more sophisticated design, templates can be used to take over the role
+of a some kind of standard wiring based on import labels (as before). Here
+the component still does not know anyhing about the kind of wiring, it is
+encapsulated in the template definition. The template now defines an additional
+deployment contract. It is used by deployment definitions to feed the wiring
+of the template. This scenarion allows for simple deployment creation just
+by specifying some simple dependencies and/or configuration value and sharing
+the complete wiring handling provided by the template with all instances.
+
+### The role of the `iacman` tool
 
 The task of iacman now is to control these generation processes. The context
 is generated based on formal settings of a deployment. Therefore the deployment
@@ -422,7 +477,7 @@ meta:
   director_uuid: (( imports.bosh.director_uuid ))
 
   sys_domain: (( deployment_name "."  landscape.domain ))
-  app_domain: (( deployment_name "apps."  landscape.domain ))
+  app_domain: (( "apps." deployment_name "."  landscape.domain ))
 
   secrets:
     uaa: (( config.uaa_client_secrets ))
@@ -728,6 +783,13 @@ Any non-existent sub command name will be interpreted as action name and
 
 ### Components
 
+A component describes a dedicated kind of deployment. Therefore it describes
+all software and procedures required to create a dedicated deployment 
+based on configurations settings provided by the so-called _context_.
+The procedures required to manage a deplyoment a formalized as _actions_,
+shell scripts or regular commands implementing the action API, that
+work on dedicated deployment state.
+
 A component is located below the `components` folder of a module.
 It might have a hierarchical name (for example `iaas/infra`). 
 The component name is directly used as folder path below the `components`
@@ -770,12 +832,14 @@ merged with the one specified in the component.
 ### Templates
 
 Templates are used to define preconfigured outlines of deployment definitions.
-A template might already contain all elements possible for deployments.
-But it does not already define a final deployment, but a sharable part of
+A template might already contain all elements possible for deployments,
+especially dependencies and their wiring with the component variation point
+contract.
+It does not already define a final deployment, but a sharable part of
 a deployment definition. A deployment definition might either refer to a
 component or a template. If it refers to a template, it shares the settings
-from the template. Templates might also to other templates to refine their
-settings.
+from the template. Templates might also refer to other templates to refine
+their settings.
 
 A template is located below the `templates` folder of a module.
 It might have a hierarchical name (for example `redis/minimal`). 
@@ -787,7 +851,15 @@ The descriptor describes the same elements like a deployment descriptor.
 
 ### Deployments
 
-Deployments are stored below the `deployments`folder of a module.
+Deployments describe concreate deployment instances in a landscape.
+Therefore they refer to a component for the deplyoment handling. The
+task of the deployment description is to handle the (optional) wiring
+of this deployment with other deplyoments in a landscape. Therefore they
+describe dependencies and the wiring of the operator configuration
+with the exports of the used deplyoments to feed the variation point contract
+of the component that the handles the concrete deployment.
+
+Deployments are stored below the `deployments` folder of a module.
 They might have a hierarchical names (for example `iaas/infra`). 
 The deployment name is directly used as folder path below the `deployments`
 folder.
