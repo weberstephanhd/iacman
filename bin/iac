@@ -4,6 +4,24 @@ SCRIPT_DIR=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
 source "$SCRIPT_DIR/../lib/iacman"
 
 ###########################################################################
+# extensions
+###########################################################################
+
+EXT=~/.iac
+
+if [ -n "$IAC_CONFIG" ]; then
+  EXT="$IAC_CONFIG"
+fi
+
+if [ -d "$EXT/modules" ]; then
+  for m in "$EXT/modules"/*; do
+    if [ -f "$m" ]; then
+      source "$m"
+    fi
+  done
+fi
+
+###########################################################################
 # commands
 ###########################################################################
 
@@ -121,7 +139,7 @@ CMD_vi()
 # lib
 CMD_lib()
 {
-  echo "$(dirname "$SCRIPT_DIR")/lib/boshman"
+  echo "$(dirname "$SCRIPT_DIR")/lib/iacman"
 }
 
 ########################
@@ -130,10 +148,17 @@ CMD_ls()
 {
   local i
   case "$1" in
-    -d|-c|-t) 
+    -a|-d|-c|-t) 
       setupEnv
       cacheAll
       case "$1" in
+        -a)
+          log confirm "active deployments"
+          for i in "${!deplDefs[@]}"; do
+            if [ -n "${deplActive["$i"]}" ]; then
+              echo "$i"
+            fi
+          done;;
         -d)
           log confirm "deployments"
           for i in "${!deplDefs[@]}"; do

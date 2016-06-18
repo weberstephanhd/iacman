@@ -236,6 +236,8 @@ declare -gA compDefs    # component definitions
 declare -gA compTypes   # component type
 declare -gA compMFs     # component manifest
 
+declare -gA pluginDefs  # plugin definitions
+
 ###########################################################################
 # component API
 ###########################################################################
@@ -389,7 +391,7 @@ get_action()
   local r="$DIR_ACTIONS/$2"
   local t="${compTypes[${deplComps[$1]}]}"
 
-  _filter_file "$d/$r" -e || _filter_file "$c/$r" -e || _filter_file "$IAC_PLUGINS/$t/$r" || true
+  _filter_file "$d/$r" -e || _filter_file "$c/$r" -e || _filter_plugin_file "$t" "$r" -e || true
 }
 
 get_instance_dir()
@@ -429,6 +431,7 @@ DIR_MODULES=modules
 DIR_TEMPLATES=templates
 DIR_COMPONENTS=components
 DIR_CONFIG=config
+DIR_PLUGINS=plugins
 
 FILE_COMPONENT=component.yml
 FILE_DEPLOYMENT=deployment.yml
@@ -498,6 +501,21 @@ _filter_file()
   fi
 }
 
+# $1: type
+# $2: file
+# $3: check
+_filter_plugin_file()
+{
+  if [ -n "$1" ]; then
+    local m="${pluginDefs["$1"]}"
+    if [ -n "$m" ]; then
+      _filter_file "$m/$2" $3
+      return 0
+    fi
+  fi
+  return 1
+}
+
 #
 # a stub is search from the component up to (exclusive) the
 # common ancestor of the component and the deployment definition
@@ -516,7 +534,7 @@ lookupStub()
         local cr="$(_elemRoot "$c" "$d")"
         local common="${deplCommon[$1]}"
         local type="${compTypes[$c]}"
-       _filter_file "$d/templates/$2" || _filter_file "$d/$2" || { [ -n "$type" ] && _filter_file "$IAC_PLUGINS/$type/$2"; } || true
+       _filter_file "$d/templates/$2" || _filter_file "$d/$2" || _filter_plugin_file "$type" "$2" || true
        _lookupTree "$c" "$2" "$d" "$common" "$DIR_CONFIG"
      fi
   fi
@@ -870,6 +888,8 @@ _scanModule()
       log warn "no deployment definition for configuration $i found in $1"
     fi
   done
+
+  scanPlugins "$i"
 }
 
 
@@ -927,9 +947,9 @@ setupComponent()
     local def="$(cat "$root/$FILE_COMPONENT")"
     local type="$(readComponentType <<<"$def")"
     compTypes[$1]="$type"
-    if [ -f "$IAC_PLUGINS/$type/$FILE_COMPONENT" ]; then
-      debug " merging component descriptor..."
-      def="$(spiff merge -- "$IAC_PLUGINS/$type/$FILE_COMPONENT" - <<<"$def")"
+    local f="$(_filter_plugin_file "$type" "$FILE_COMPONENT" || true)"
+    if [ -n "$f" ]; then
+      def="$(spiff merge -- "$f" - <<<"$def")"
     fi
 
     local res=( )
@@ -1098,7 +1118,7 @@ _setupElement()
     fi
   done
   debug " glimpses ${filtered[@]}"
-  _set_array "$a_n" ${3}Glmps "${filtered[@]}"
+  _set_array "$a_n" ${3}EGlmps "${filtered[@]}"
 
   debug " imports ${res[@]}"
   _set_array "$a_n" ${3}Imps "${res[@]}"
@@ -1179,132 +1199,6 @@ _handleSetup_depl()
   local stubs=( )
   lookupStubs "$a_n"  "${res[@]}"
   _set_array "$a_n" deplStubs "${stubs[@]}"
-}
-
-# $1: depl name
-OLDsetupDeployment()
-{
-  local ctxs=( )
-  local stubs=( )
-  local root="${deplDefs["$1"]}"
-  local res=( )
-  local i
-  declare -A hash
-
-  debug " analyse descriptor..."
-  local def="$(cat "$root/$FILE_DEPLOYMENT")"
-
-  _get_yaml_list '.["descriptor-context"][]' <<<"$def"
-  debug "found descriptor context: ${res[@]}"
-  _set_array "$1" deplDCtxs "${res[@]}"
-  if [ ${#res[@]} -gt 0 ]; then
-    lookupConfigs "$1" "$root" "${res[@]}"
-    _set_array "$1" deplDStubs "${stubs[@]}"
-    if [ ${#stubs[@]} -gt 0 ]; then
-      if [ -n "${opts[spiff]+x}" ]; then
-        log info spiff merge "$root/$FILE_DEPLOYMENT" "${stubs[@]}"
-      fi
-      def="$(spiff merge - "${stubs[@]}" <<<"$def" || Error "descriptor processing for $1 failed")"
-    fi
-  else
-    _set_array "$1" deplDStubs
-  fi
-
-  local comp="$(get_yaml_field - .component <<<"$def")"
-  if [ -z "$comp" ]; then
-    log warn " no component defined for deployment $1"
-  else
-    local croot="${compDefs["$comp"]}"
-    if [ -z "$croot" ]; then
-      log warn " component $comp for deployment $1 not defined"
-      deplCommon[$1]=
-    else
-      debug " using component $comp"
-      _get_array ctxs "$comp" compCtxs
-      debug " component contexts: ${ctxs[@]}"
-      deplCommon[$1]="$(_commonRoot "$croot" "$root")"
-    fi
-  fi
-  deplComps[$1]="$comp"
-
-  local active="$(get_yaml_field - .active <<<"$def")"
-  if [ -z "$active" -o "$active" == true ]; then
-    active=X
-  else 
-    active=
-  fi
-  deplActive[$1]="$active"
-
-  debug " analyse imports..."
-
-  declare -A implabels
-  declare -A implabels # if the second line is deleted, the array is not defined ???????
-
-  _get_yaml_labeled_list '.requires' <<<"$def"
-  res=( )
-  for i in "${!hash[@]}"; do
-    local d="${hash["$i"]}"
-    local l="$(_map_name "$i")"
-    if ! contains "$d" "${res[@]}"; then
-      res+=( "$d" )
-    fi
-    if [ ${implabels["$l"]+set} ]; then
-      warn "label '$l' already defined for deployment $1"
-    else
-      implabels["$l"]="$d"
-    fi
-  done
-  
-  debug " requires ${res[@]}"
-  _set_array "$1" deplReqs "${res[@]}"
-  _set_array "$1" deplEReqs "${res[@]}"
-
-  debug " analyse glimpses..."
-  local filtered=( )
-  _get_yaml_labeled_list '.glimpses' <<<"$def"
-  debug "-> $(declare -p hash)"
-  for i in "${!hash[@]}"; do
-    local d="${hash["$i"]}"
-    local l="$(_map_name "$i")"
-    if ! contains "$d" "${res[@]}"; then
-      res+=( "$d" )
-      filtered+=( "$d" )
-    fi
-    if [ ${implabels["$l"]+set} ]; then
-      warn "label '$l' already defined for deployment $1"
-    else
-      implabels["$l"]="$d"
-    fi
-  done
-
-  debug " glimpses ${filtered[@]}"
-  _set_array "$1" deplGlmps "${filtered[@]}"
-  _set_array "$1" deplEGlmps "${filtered[@]}"
-  _set_array "$1" deplImps "${res[@]}"
-  _set_hash "$1" deplLabels implabels
-
-  debug " analyse includes..."
-  _get_yaml_list '.includes[]' <<<"$def"
-  debug " includes ${res[@]}"
-  _set_array "$1" deplIncls "${res[@]}"
-  for i in "${res[@]}"; do
-    local m="${modDefs[$i]}"
-    if [ -z "$m" ]; then
-      log warn " module $i for deployment $1 not defined"
-    fi
-  done
-
-  debug " analyse context..."
-  _get_yaml_list '.context[]' <<<"$def"
-  debug " context ${res[@]}"
-  _set_array "$1" deplCtxs "${res[@]}"
-
-  set_array res uniq "${ctxs[@]}" "${res[@]}"
-  debug " effective context ${res[@]}"
-
-  warn lookup $1: "${res[@]}"
-  lookupStubs "$1"  "${res[@]}"
-  _set_array "$1" deplStubs "${stubs[@]}"
 }
 
 setupEnv()
@@ -1409,11 +1303,22 @@ setupType()
 cacheAll()
 {
   log info caching landscape...
+  scanPlugins "$IAC_PLUGINS"
   scan "$LROOT"
 
   setupType component "${!compDefs[@]}"
   setupType template "${!tmplDefs[@]}"
   setupType deployment "${!deplDefs[@]}"
+}
+
+scanPlugins()
+{
+  for m in "$1"/*; do
+    if [ -d "$m" ]; then
+      pluginDefs["$(basename "$m")"]="$m"
+      found found plugin $m
+    fi
+  done
 }
 
 ###########################################################################
@@ -1563,7 +1468,7 @@ __closure()
   local i
   if ! check_deployment "$1"; then
     local m
-    if [ "${deplComp[$1]}" ]; then
+    if [ "${deplComps[$1]}" ]; then
       m="inactive '$1'"
     else
       m="missing '$1'"
