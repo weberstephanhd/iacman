@@ -765,6 +765,9 @@ following sub commands are supported:
 - `order [<deployment name>|all]`
   determine a valid deployment order for the given deployment(s).
 
+- `clean [<deployment name>|all]`
+  cleanup generation data.
+
 -  `action <action name>`
    call named action for the given deployment. The deployment can be specified
    via the option `-d`.
@@ -780,6 +783,22 @@ Any non-existent sub command name will be interpreted as action name and
 
 
 ## Descriptive Elements
+
+### Modules
+
+Modules are used to bundle sets of elements. They provide a single
+folder entry point to contain such sets. This a a natural point for
+sharing content among different landscapes are othe modules (for example
+by git submodules).
+
+Modules may include all kinds of elements, including other modules.
+They have a flat name, that must be unique for a landscape.
+besides the root module (without a name) modules are store below the
+`modules` folder of a another module using its name as folder name.
+This folder (like the landscape folder) is the module root folder.
+
+The module root folder may now contain any eleemnt type below
+dedicated folders as described by the following sections.
 
 ### Components
 
@@ -808,6 +827,17 @@ The component descriptor uses the following elements:
 
 ### Plugins
 
+If provided by `iacman` itself, plugins are stored below the installation's
+`plugins` folder. If provided by a module the `plugins` folder is a sub folder
+of the module folder. Every plugin is stored in a folder according to its name
+below the `plugins` folder.
+
+A plugin may provide two features:
+- default settings for typed components
+- command line extensions
+
+#### Type plugins
+
 Every component provides actions to execute dedicated tasks, like export
 creation. Logically those actions belong to the component. But the action
 implementation typically does not need to implement dedicated aspects of
@@ -815,19 +845,47 @@ a dedicated deployment, because those aspects are separated into the
 deployments. The task of the actions is dependent only on the kind
 of component, for example a bosh deployment. All bosh deployments could
 basically be handled the same way, just using different manifest templates,
-as log as they do not require additional special step that cannot be
+as long as they do not require additional special steps that cannot be
 generalized.
 
-Iacman _plugins_ now provide a possibility to share dedicated features of a
+Iacman _type plugins_ now provide a possibility to share dedicated features of a
 component among multiple similar ones. Therefore the component may provide
-a type attribute specifying a type string. The iacman installation provides
-the possibility to host type plugins, that have the same filesystem structure
-like components. So, a plugin might offer action scripts in its `actions`
-folder. Iacman now lookups a required action script in the component
-and an optionally configured type plugin.
+a type attribute specifying a type string. The iacman installation or
+modules provide the possibility to host type plugins, that have the same
+filesystem structure like components. So, a plugin might offer action scripts
+in its `actions` folder. Iacman now lookups a required action script in the
+component and an optionally configured type plugin.
 
 Additionally the type plugin might contain a `component.yml` that is
-merged with the one specified in the component.
+merged with the one specified in the component or default stub files for the
+context generation.
+
+#### Extensions
+
+Additionally or alternatively to actions for components a plugin may contain
+extensions. Extensions are shell scripts that are sourced by the 
+`iacman` tool. They have access to the actual landscape model stored in
+shell variables and the library functions of `iacman`. Those scripts
+are stored below the folder `iac` of the plugin's root folder. There might be
+multiple scripts.
+
+Extensions are used to offer new commands working on a landscape. 
+A command is a shell function with the suffix `CMD_`. It gets
+the arguments from the command line (after parsing the standard `iacman`
+options in case of shortcuts, (`iac<cmd>`) commands linked inside a `PATH` 
+directory).
+
+Additionally an extension might provide help for a provided command by
+implementing the function `HELP_<cmd>`. It may echo multiple lines with
+the following syntax:
+- `<cmd> [<arg desc>]:<short desc head line>`
+- ` <space>:<short desc continuation line>`
+- `:<explanation line>`
+The command with the argument description should not be longer than 35
+characters. If it's longer the short desc should only use the
+continuation lines.
+
+For more details about the library please refer to API reference.
 
 ### Templates
 
@@ -841,8 +899,7 @@ component or a template. If it refers to a template, it shares the settings
 from the template. Templates might also refer to other templates to refine
 their settings.
 
-A template is located below the `templates` folder of a module.
-It might have a hierarchical name (for example `redis/minimal`). 
+A template is located below the `templates` folder of a module.  It might have a hierarchical name (for example `redis/minimal`). 
 The template name is directly used as folder path below the `templates`
 folder. A template root folder at least hosts a template descriptor
 `template.yml` describing some template features.
@@ -913,3 +970,5 @@ contains fields for every import, the key is the label of the import and
 the value the contents of the export file of the imported deployment.
 
 ## Dependencies and Cycles
+
+## API Reference

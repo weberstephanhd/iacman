@@ -13,13 +13,7 @@ if [ -n "$IAC_CONFIG" ]; then
   EXT="$IAC_CONFIG"
 fi
 
-if [ -d "$EXT/modules" ]; then
-  for m in "$EXT/modules"/*; do
-    if [ -f "$m" ]; then
-      source "$m"
-    fi
-  done
-fi
+scanExtensions "$EXT"
 
 ###########################################################################
 # commands
@@ -107,6 +101,14 @@ check_file_in_dir()
   )
 }
 
+HELP_vi()
+{
+  echo "vi <filename>:call editor for file in deployment folder"
+  echo ":the filename might be flat or hierarchical,"
+  echo ":it is found below a deployment folder or"
+  echo ":its gen folder"
+}
+
 CMD_vi()
 {
   setupEnv
@@ -126,6 +128,10 @@ CMD_vi()
       cd "$i"
       exec vi "$1"
     fi
+    if check_file_in_dir "$1" "gen/$i"; then
+      cd "$i"
+      exec vi "gen/$1"
+    fi
     if check_file_in_dir "$1" "$c"; then
       cd "$c"
       exec vi "$1"
@@ -137,6 +143,12 @@ CMD_vi()
 
 ########################
 # lib
+HELP_lib()
+{
+  echo "lib:echo the library path for sourcing the iac"
+  echo " :library"
+}
+
 CMD_lib()
 {
   echo "$(dirname "$SCRIPT_DIR")/lib/iacman"
@@ -509,6 +521,11 @@ CMD_closure()
   fi
 }
 
+HELP_order()
+{
+  echo "order [<deployment name>|all]:list deployments by deployment order"
+}
+
 CMD_order()
 {
   setupEnv
@@ -519,7 +536,10 @@ CMD_order()
   local a=( )
   local depls=( )
 
-  if [ $# -ne 0 -o -n "${opts[deployment]+set}" ]; then
+  if [ "$1" == all ]; then
+    log info "generate deployment order"
+    depls=( )
+  else
     n="$(require_deplname "$1")"
     t="$(require_deployment "$n")"
     log info "generating deployment order for $n"
@@ -528,9 +548,6 @@ CMD_order()
       warn "deployment cycle detected"
     fi
     depls=( "$n" )
-  else
-    log info "generate deployment order"
-    depls=( )
   fi
 
   if ! deploy_order a "${depls[@]}"; then
@@ -631,7 +648,11 @@ exec_action()
 {
   setupEnv
   cacheAll
+  _exec_action "$@"
+}
 
+_exec_action()
+{
   local n
   local t
   n="$(deplname_from_args)"
@@ -668,17 +689,59 @@ CMD_deploy()
   exec_action deploy "$@"
 }
 
+CMD_clean()
+{
+  setupEnv
+  cacheAll
+  local d
+
+  if [ "$1" == all ]; then
+    for d in "${!deplDefs[@]}"; do
+      cleanup_deployment "$d"
+    done
+  else
+    d="$(require_deplname "$1")"
+    cleanup_deployment "$d"
+  fi
+}
+
 # missing command handler
 # $1: prefix of missing command function
 # $2: command name
 # $3+: command arguments
 handle_action_command()
 {
+  setupEnv
+  cacheAll
+  loadExtensions
   if [ "$(type -t "$1$2")" == "function" ]; then
     $1$2 "${@:3}"
   else
-    exec_action "$2" "${@:3}"
+    _exec_action "$2" "${@:3}"
   fi
+}
+
+###########################################################################
+# utils
+###########################################################################
+
+list_commands()
+{
+  QUIET=X
+  { _setupEnv && cacheAll; } || true
+  known=( colors ls directory show closure imports context clean action prepare manifest exports deploy plan )
+  loadExtensions
+  declare -F | while read a b c d; do
+    echo "$c"
+  done | grep -e "^CMD_" | sed -e 's/^CMD_\(.*\)/\1/' | sort | while read a; do
+    if ! contains "$a" "${known[@]}"; then
+      if [ "$(type -t "HELP_$a")" == "function" ]; then
+        eval HELP_$a
+      else
+        echo "$a:"
+      fi
+    fi
+  done
 }
 
 ###########################################################################
@@ -697,6 +760,7 @@ fi
 ###########################################################################
 
 if [ \( "$cmd" == iac -a -z "$1" \) -o "$1" == help -o "$1" == "--help" -o "$1" == "-help" ]; then
+  help="$(list_commands)"
   found lsman - landscape management tool
   title "iac [<options>] <command> [<args>]"
   found
@@ -710,14 +774,25 @@ if [ \( "$cmd" == iac -a -z "$1" \) -o "$1" == help -o "$1" == "--help" -o "$1" 
   found "  -d <name>  deployment name"
   found
   found "Commands:"
-  found "  ls [<dir>]                                  list landscape/module structure"
+  found "  ls [<dir>]                     list landscape/module structure"
   found "  directory [deployment|template|component|module|landscape|config"]
-  found "                                              show dedicted derived directory"
-  found "                                              based on current working directory"
-  found "  show [[component|template|deployment|module] <name>] details for dedicated element"
-  found "  closure [<name>]                            dependency closure"
-  found "  imports                                     generate imports"
-  found "  context                                     generate context"
+  found "                                 show dedicted derived directory"
+  found "                                 based on current working directory"
+  found "  show [[component|template|deployment|module] <name>]"
+  found "                                 details for dedicated element"
+  found "  closure [<name>]               dependency closure"
+  found "  imports                        generate imports"
+  found "  context                        generate context"
+  found "  clean                          cleanup generation folders"
+  echo "$help" | while IFS=":" read -r a b; do
+    printf -v txt "%-30s %s" "$a" "$b"
+    if [ -n "$a" ]; then
+      found "  $txt"
+    else
+      info  "  $txt"
+    fi
+  done
+
   found 
   found "Handle actions provided by component for deployments:"
   found "  action <name>  <args>         execute arbitrary action for deployment"
@@ -751,9 +826,6 @@ if [ "$cmd" == iac ]; then
   fi
 fi
 
-#
-# support boshman based actions by providing path to source boshman
-#
 if [ ${opts[quiet]+set} ]; then
   QUIET=X
 fi
@@ -765,7 +837,7 @@ if [ ${opts[no-colors]+set} ]; then
 fi
 
 
-CMDS=( show closure order imports context exports manifest action ls prepare plan deploy lib vi directory colors )
+CMDS=( show closure order imports context exports manifest action ls prepare plan deploy lib vi directory clean colors )
 cmd="$(resolve_shortcut "$cmd" "${CMDS[@]}")"
 
 execute_command --invalid=handle_action_command "$cmd" CMD_ "${CMDS[*]}" "$@"

@@ -88,6 +88,10 @@ p_deplcfg()
 {
   color_cyan "$@"
 }
+p_plugin()
+{
+  color_cyan "$@"
+}
 p_cfg()
 {
   color_dark "$@"
@@ -204,6 +208,8 @@ get_component_deployments()
 ###########################################################################
 # landscape data
 ###########################################################################
+extensions=( )          # list of extension sources
+
 declare -gA modDefs     # module definition locations
 declare -gA deplDefs    # deployment definition locations
 declare -gA deplComps   # deployment component for deployment
@@ -250,17 +256,19 @@ ACTION_CREATE_MANIFEST=create_manifest
 # $2: ctx
 ACTION_create_exports()
 {
-  local s="$(get_action "$1" $ACTION_CREATE_EXPORTS)"
-  if [ -n "$s"  ]; then
-     _execute_action "$1" "$s" "$2"
-  else
-    s="$(get_action "$1" $ACTION_CREATE_MANIFEST)"
+  {
+    local s="$(get_action "$1" $ACTION_CREATE_EXPORTS)"
     if [ -n "$s"  ]; then
-      _execute_action "$1" "$s" "$2"
+       _execute_action "$1" "$s" "$2"
     else
-      cat "$2"
-    fi | yaml2json | jq .exports | spiff merge -
-  fi
+      s="$(get_action "$1" $ACTION_CREATE_MANIFEST)"
+      if [ -n "$s"  ]; then
+        _execute_action "$1" "$s" "$2"
+      else
+        cat "$2"
+      fi | yaml2json | jq .exports | spiff merge - 
+    fi
+  } || Error "cannot create default exports for $1"
 }
 
 # $1: name
@@ -889,7 +897,7 @@ _scanModule()
     fi
   done
 
-  scanPlugins "$i"
+  scanPlugins $p "$1/$DIR_PLUGINS" "$2"
 }
 
 
@@ -939,7 +947,7 @@ readComponentType()
   fi
 }
 
-# $1: depl name
+# $1: comp name
 setupComponent()
 {
   local root="${compDefs["$1"]}"
@@ -949,7 +957,7 @@ setupComponent()
     compTypes[$1]="$type"
     local f="$(_filter_plugin_file "$type" "$FILE_COMPONENT" || true)"
     if [ -n "$f" ]; then
-      def="$(spiff merge -- "$f" - <<<"$def")"
+      def="$(spiff merge -- "$f" - <<<"$def" || Error "descriptor processing failed for component $1 ($type)" )"
     fi
 
     local res=( )
@@ -1201,7 +1209,24 @@ _handleSetup_depl()
   _set_array "$a_n" deplStubs "${stubs[@]}"
 }
 
-setupEnv()
+
+_check_for_hierarchy()
+{
+  local d
+  for d in "$@"; do
+    if [ -d "$d" ]; then
+      for d in "$d"/*.yml; do
+        if [ -f "$d" ]; then
+          continue 2
+        fi
+      done
+      return 
+    fi
+  done
+  return 1
+}
+
+_setupEnv()
 {
   local d=$(pwd)
   local names=( )
@@ -1218,10 +1243,11 @@ setupEnv()
   MROOT=
   MNAME=
 
-  if [ -d "$d/$DIR_DEPLOYMENTS" -o \
-       -d "$d/$DIR_COMPONENTS" -o \
-       -d "$d/$DIR_TEMPLATES" -o \
-       -d "$d/$DIR_MODULES" ]; then
+  if _check_for_hierarchy "$d/$DIR_DEPLOYMENTS" \
+                          "$d/$DIR_COMPONENTS"  \
+                          "$d/$DIR_TEMPLATES"  \
+                          "$d/$DIR_PLUGINS"  \
+                          "$d/$DIR_MODULES"; then
     MROOT="$d" 
   fi
   while [ -z "$MROOT" -a "$d" != "/" ]; do
@@ -1282,6 +1308,13 @@ setupEnv()
     done
     log found "Found landscape root at $LROOT"
   else
+    return 1
+  fi
+}
+
+setupEnv()
+{
+  if ! _setupEnv; then
     Error "no module or landscape found"
   fi
 }
@@ -1313,12 +1346,53 @@ cacheAll()
 
 scanPlugins()
 {
-  for m in "$1"/*; do
-    if [ -d "$m" ]; then
-      pluginDefs["$(basename "$m")"]="$m"
-      found found plugin $m
+  local p
+  local i
+  if [ "$1" == -p ]; then
+    p=$1
+    shift
+  fi
+  for i in "$1"/*; do
+    if [ -d "$i" ]; then
+      if [ -n "$p" ]; then
+        p_plugin "  $2plugin $(basename "$i")"
+      fi
+      pluginDefs["$(basename "$i")"]="$i"
+      scanExtensions "$i"
     fi
   done
+}
+
+scanExtensions()
+{
+  local e
+  debug scanning for extensions: "$1"
+  if [ -d "$1/iac" ]; then
+    for e in "$1/iac"/*; do
+      if [ -f "$e" ]; then
+        extensions+=( "$e" )
+      fi
+    done
+  fi
+}
+
+loadExtensions()
+{
+  local e
+  for e in "${extensions[@]}"; do
+    debug loading "$e"
+    source "$e"
+  done
+}
+
+# $1: name
+cleanup_deployment()
+{
+  local gen="$(get_instance_gen_dir "$d")"
+  if [ -d "$gen" ]; then
+    info "cleanup $d"
+    rm -Rf "$gen"
+  fi
 }
 
 ###########################################################################
@@ -1386,7 +1460,7 @@ __generate_context()
   if [ -n "${opts[spiff]+x}" ]; then
     log info spiff merge "${stubs[@]}" "$2/$GEN_IMP" 
   fi
-  spiff merge "${stubs[@]}" "$2/$GEN_IMP" >"$ctx"
+  spiff merge "${stubs[@]}" "$2/$GEN_IMP" >"$ctx" || Error "cannot generate context for $1"
 }
 
 # $1: name
