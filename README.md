@@ -472,7 +472,7 @@ config:
 bosh: (( imports.bosh.local ))
 
 meta:
-  deployment_name: cf
+  deployment_name: (( imports.meta.deployment.name ))
   vcap_password: (( imports.bosh.vcap_password ))
   director_uuid: (( imports.bosh.director_uuid ))
 
@@ -968,6 +968,22 @@ and contains all the exports of the referenced (requires or glimpses)
 deployments. This file contains a single section `imports` which
 contains fields for every import, the key is the label of the import and
 the value the contents of the export file of the imported deployment.
+
+Additionally the `imports` section contains a `meta` node providing some
+meta data for the actual deployment:
+- deployment:
+  * name: the name of the deployment
+  * dir: the directory path of the deployment configuration in the landscape
+  * state: the directory path for the state of the actual deployment
+- component:
+  * name: the name of the component of the actual deployment
+  * dir: the directory path of the component of the actual deployment
+
+For the stubs found in the deployment this information is always constant
+and might be seen as superfluous. But for stubs provided by templates
+the deployment information is different for every concrete deployment and may
+be used in a generic way (for example to set the deployment name of a bosh
+deployment in the template).
 
 ## Dependencies and Cycles
 

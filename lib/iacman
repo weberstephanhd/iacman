@@ -1422,7 +1422,16 @@ _generate_imports()
   fi
   mkdir -p "$2/$1"
   {
+    local c="${deplComps["$1"]}"
     echo "imports:"
+    echo "  meta:"
+    echo "    component:"
+    echo "      name: \"$c\""
+    echo "      dir: \"${compDefs["$c"]}\""
+    echo "    deployment:"
+    echo "      name: \"$1\""
+    echo "      dir: \"$(get_instance_dir "$1")\""
+    echo "      state: \"$(get_state_dir "$1")\""
     get_labels labels "$1"
     for l in "${!labels[@]}"; do
       i="${labels["$l"]}"
