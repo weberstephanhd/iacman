@@ -1019,8 +1019,7 @@ _setupElement()
     _set_array "$a_n" ${a_k}DStubs
   fi
 
-  declare -A implabels
-  declare -A implabels # if the second line is deleted, the array is not defined ???????
+  declare -A implabels=( )
 
   local rlabels=( )
   local glabels=( )
