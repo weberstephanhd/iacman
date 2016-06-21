@@ -174,11 +174,6 @@ tf()
 # main
 #########################################
 
-if [ "$CMD" == "tf" ]; then
-  CMD="$1"
-  shift
-fi
-
 if [ -z "$IAC_QUIET" ]; then
   echo "--> action $CMD $@" >&2
 fi
@@ -190,10 +185,12 @@ case "$CMD" in
   deploy)          do_deploy "$@";;
   create_exports)  do_export "$@";;
   plan)            do_plan "$@";;
-  *) (
-       tf "$CMD" "${@:2}"
-     )
-
+  tf) (
+       do_manifest "$1" >"$GEN_DIR/terraform.tfvars"
+       tf get
+       tf "${@:2}"
+     );;
+  
 esac
 
 
