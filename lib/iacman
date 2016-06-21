@@ -1702,12 +1702,13 @@ generate_imports()
 }
 
 # $1: name
-# $2; dir
+# $2: dir
+# [$3:] publish function
 generate_context()
 {
   local publish="${3:-_publish}"
   local imps=( )
-  _generate_closure "$@"
+  _generate_closure "$1" "$2"
   if ! contains "$1" "${imps[@]}"; then
     log info "generating context for $1"
     _generate_context "$@"
