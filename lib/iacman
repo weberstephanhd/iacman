@@ -1355,7 +1355,11 @@ scanPlugins()
   for i in "$1"/*; do
     if [ -d "$i" ]; then
       if [ -n "$p" ]; then
-        p_plugin "  $2plugin $(basename "$i")"
+        if [ -d "$i/actions" ]; then
+          p_plugin "  $2component type $(basename "$i")"
+        else
+          p_plugin "  $2plugin $(basename "$i")"
+        fi
       fi
       pluginDefs["$(basename "$i")"]="$i"
       scanExtensions "$i"
@@ -1371,6 +1375,9 @@ scanExtensions()
     for e in "$1/iac"/*; do
       if [ -f "$e" ]; then
         extensions+=( "$e" )
+        if [ -n "$p" ]; then
+          p_plugin "  $2extension $(basename "$1")#$(basename "$e")"
+        fi
       fi
     done
   fi

@@ -725,8 +725,14 @@ General options to nearly all sub commands are:
 Any sub command may be abbreviated (for example `manifest` -> `man`). The
 following sub commands are supported:
 
-- `ls [<dir>]`
-  list the logical landscape structure or the specified sub structure.
+- `ls [-dtcla] [<dir>]`
+  without option it lists the logical landscape structure or the specified
+  sub structure.
+  Otherwise it lists dedicated types of elements
+  - `-d` list deployments (with `-a` list only active deployments)
+  - `-t` list templates
+  - `-c` list components
+  - `-l` more detailed lists
 
 - `show [[component|template|deployment|module|landscape] <element name>]`
   show details for a given element. If no element is specified the element

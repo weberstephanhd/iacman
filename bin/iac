@@ -35,6 +35,13 @@ CMD_colors()
 
 ########################
 # directories
+HELP_directory()
+{
+  echo "directory [deployment|template|component|module|landscape|config]"
+  echo " :show dedicted derived directory"
+  echo " :based on current working directory"
+}
+
 CMD_directory()
 {
   QUIET=X
@@ -156,39 +163,93 @@ CMD_lib()
 
 ########################
 # ls
+HELP_ls()
+{
+  echo "ls [-dtcla] [<path>]:list elements from file system structure"
+  echo ":without option it lists the module structure"
+  echo ":for the given path or the complete landscape"
+  echo ":Options:  list elements of a given type"
+  echo ":  -d  list deployments"
+  echo ":  -t  list templates"
+  echo ":  -c  list components"
+  echo ":  -a  with -d list only active deployments"
+  echo ":  -l  list more details"
+}
+
 CMD_ls()
 {
   local i
-  case "$1" in
-    -a|-d|-c|-t) 
-      setupEnv
-      cacheAll
-      case "$1" in
-        -a)
-          log confirm "active deployments"
-          for i in "${!deplDefs[@]}"; do
-            if [ -n "${deplActive["$i"]}" ]; then
-              echo "$i"
+  local d
+  local _cnt
+  local a=( )
+  declare -A params
+  declare -A ls_opts
+  params=( [l]=long [a]=active [d]= [t]= [c]= )
+  OPT_parse_options params ls_opts "$@"
+  shift $(( _cnt - 1 ))
+
+  if check_opts ls_opts d t c; then
+    setupEnv
+    cacheAll
+    if check_opts ls_opts d; then
+      if check_opts ls_opts a; then
+        log confirm "active deployments"
+      else
+        log confirm "deployments"
+      fi
+      for i in "${!deplDefs[@]}"; do
+        if [ -n "${ls_opts[active]-unset}" -o -n "${deplActive["$i"]}" ]; then
+          if [ ${ls_opts[long]+set} ]; then
+            printf "%-20s %s\n" "$i" "${deplComps[$i]}"
+            _get_array a "$i" deplInfos || true
+            for i in "${a[@]}"; do
+              echo "    $(norm_path "$i")"
+            done
+          else
+            echo "$i"
+          fi
+        fi
+      done
+    fi
+    if check_opts ls_opts t; then
+      log confirm "templates"
+      for i in "${!tmplDefs[@]}"; do
+        if [ ${ls_opts[long]+set} ]; then
+          printf "%-20s %s\n" "$i" "$(norm_path "${tmplDefs[$i]}")"
+          for d in "${!tmplDefs[@]}"; do
+            if [ "${tmplTmpls["$d"]}" == "$i" ]; then
+              echo "    $d (template)"
             fi
-          done;;
-        -d)
-          log confirm "deployments"
-          for i in "${!deplDefs[@]}"; do
-            echo "$i"
-          done;;
-        -t)
-          log confirm "templates"
-          for i in "${!tmplDefs[@]}"; do
-            echo "$i"
-          done;;
-        -c)
-          log confirm "components"
-          for i in "${!compDefs[@]}"; do
-            echo "$i"
-          done;;
-      esac
-      return;;
-  esac
+          done
+          for d in "${!deplDefs[@]}"; do
+            if [ "${deplTmpls["$d"]}" == "$i" ]; then
+              echo "    $d (deployment)"
+            fi
+          done
+        else
+          echo "$i"
+        fi
+      done
+    fi
+    if check_opts ls_opts c; then
+      log confirm "components"
+      for i in "${!compDefs[@]}"; do
+        if [ ${ls_opts[long]+set} ]; then
+          printf "%-20s %s\n" "$i" "$(norm_path "${compDefs[$i]}")"
+          for d in "${!deplDefs[@]}"; do
+            if [ "${deplComps["$d"]}" == "$i" ]; then
+              echo "    $d"
+            fi
+          done
+        else
+          echo "$i"
+        fi
+      done
+    fi
+    return
+  fi
+
+
   if [ -z "$1" ]; then
     setupEnv
     scan -p "$LROOT"
@@ -435,6 +496,12 @@ listModule()
     declare -A compDefs    # component defintions
     scan -p "$p"
   )
+}
+
+HELP_show()
+{
+  echo "show [[component|template|deployment|module] <name>]"
+  echo " :details for dedicated element"
 }
 
 CMD_show()
@@ -729,7 +796,7 @@ list_commands()
 {
   QUIET=X
   { _setupEnv && cacheAll; } || true
-  known=( colors ls directory show closure imports context clean action prepare manifest exports deploy plan )
+  known=( colors closure imports context clean action prepare manifest exports deploy plan )
   loadExtensions
   declare -F | while read a b c d; do
     echo "$c"
@@ -742,6 +809,19 @@ list_commands()
       fi
     fi
   done
+}
+
+
+# $1: opts hash
+# $2: options to check
+check_opts()
+{
+  for o in "${@:2}"; do 
+    if eval "[ \${$1[$o]+set} ]"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 ###########################################################################
@@ -761,7 +841,7 @@ fi
 
 if [ \( "$cmd" == iac -a -z "$1" \) -o "$1" == help -o "$1" == "--help" -o "$1" == "-help" ]; then
   help="$(list_commands)"
-  found lsman - landscape management tool
+  found iacman - Infrastructure As Code landscape MANagement tool
   title "iac [<options>] <command> [<args>]"
   found
   found "Options:"
@@ -774,12 +854,6 @@ if [ \( "$cmd" == iac -a -z "$1" \) -o "$1" == help -o "$1" == "--help" -o "$1" 
   found "  -d <name>  deployment name"
   found
   found "Commands:"
-  found "  ls [<dir>]                     list landscape/module structure"
-  found "  directory [deployment|template|component|module|landscape|config"]
-  found "                                 show dedicted derived directory"
-  found "                                 based on current working directory"
-  found "  show [[component|template|deployment|module] <name>]"
-  found "                                 details for dedicated element"
   found "  closure [<name>]               dependency closure"
   found "  imports                        generate imports"
   found "  context                        generate context"
