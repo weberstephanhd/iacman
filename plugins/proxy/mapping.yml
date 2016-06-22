@@ -1,6 +1,4 @@
 
 imports: (( merge ))
 
-internal: (( &temporary ( map[imports|k,v|->v] ) ))
-
-exports: (( length(internal) == 1 ? internal.[0] :error("expected single import to map") ))
+exports: (( length(imports.meta.labels) == 1 ? eval("imports." imports.meta.labels.[0]) :error("expected single import to map") ))
