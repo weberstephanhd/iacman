@@ -511,6 +511,10 @@ CMD_show()
   cacheAll
 
   if [ $# -eq 0 ]; then
+    if [ ${opts[deployment]+set} ]; then
+      showDeployment "${opts[deployment]}"
+      return
+    fi
     if [ -n "$CROOT" ]; then
       showComponent "$CNAME"
     fi

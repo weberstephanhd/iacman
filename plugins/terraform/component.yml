@@ -1,3 +1,2 @@
 <<: (( merge ))
 manifest: terraform.tfvars
-

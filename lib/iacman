@@ -372,22 +372,22 @@ get_labels()
 
 get_imports()
 {
-  _get_array "$1" "$2" deplImps
+  _get_array "$1" "$2" deplImps || true
 }
 
 get_glimpses()
 {
-  _get_array "$1" "$2" deplEGlmps
+  _get_array "$1" "$2" deplEGlmps || true
 }
 
 get_required()
 {
-  _get_array "$1" "$2" deplEReqs
+  _get_array "$1" "$2" deplEReqs || true
 }
 
 get_stubs()
 {
-  _get_array "$1" "$2" deplStubs
+  _get_array "$1" "$2" deplStubs || true
 }
 
 # $1: name
@@ -1043,9 +1043,9 @@ _setupElement()
         fi
         debug " refering to component $comp"
         _get_hash implabels "$tmpl" tmplLabels
-        _get_array rlabels "$tmpl" tmplRLab
-        _get_array glabels "$tmpl" tmplGLab
-        _get_array ctxs "$tmpl" tmplECtxs
+        _get_array rlabels "$tmpl" tmplRLab || true
+        _get_array glabels "$tmpl" tmplGLab || true
+        _get_array ctxs "$tmpl" tmplECtxs || true
         debug " template contexts: ${ctxs[@]}"
       fi
     fi
@@ -1054,7 +1054,7 @@ _setupElement()
       log warn " ignoring template for $a_t $a_n because it alreday defines a component"
     fi
     debug " using component $comp"
-    _get_array ctxs "$comp" compCtxs
+    _get_array ctxs "$comp" compCtxs || true
     debug " component contexts: ${ctxs[@]}"
   fi
 
@@ -1460,12 +1460,18 @@ _generate_imports()
 }
 
 # $1: name
-# $2: gen dir
+# $2: tmp dir
 _generate_context()
 {
+  __modified=
   _generate_imports "$@"
   #confirm "$(cat "$2/$1/$GEN_IMP")"
-  __generate_context "$1" "$2/$1"
+  local md5="$(md5sum "$2/$1/$GEN_IMP")"
+  if [ ! -f "$2/$1/$GEN_CTX" -o "$md5" != "${impHashes["$1"]}" ]; then
+    __generate_context "$1" "$2/$1"
+    impHashes["$1"]="$md5"
+    __modified=X
+  fi
 }
 
 # $1: deployment name
@@ -1483,13 +1489,18 @@ __generate_context()
 }
 
 # $1: name
-# $2: tmp gen dir
+# $2: tmp dir
 _generate_exports()
 {
+  local __modified
   _generate_context "$@"
   local ctx="$2/$1/$GEN_CTX"
-  ACTION_create_exports "$1" "$ctx" >"$2/$1/$GEN_EXP"
-  log confirm "    exp: $(md5sum "$2/$1/$GEN_EXP")"
+  if [ ! -f "$2/$1/$GEN_EXP" -o -n "$__modified" ]; then
+    ACTION_create_exports "$1" "$ctx" >"$2/$1/$GEN_EXP"
+    log confirm "    exp: $(md5sum "$2/$1/$GEN_EXP")"
+  else
+    log confirm "    exp: skipped because imports unchanged)"
+  fi
 }
 
 # $1: name
@@ -1666,11 +1677,14 @@ _handlePublish()
   fi
 }
 
+declare -gA impHashes=( )
+
 # $1: deployment name
 # $2: tmp dir
 # [$3]: X= inculde  initial
 _generate_closure()
 {
+  impHashes=( )
   imps=( )
   if ! import_closure imps "$1"; then
     list_array __missing dumpargs_err
