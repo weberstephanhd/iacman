@@ -68,6 +68,11 @@ uniq()
   done
 }
 
+hash()
+{
+  md5sum "$1" | { read a b; echo $a; }
+}
+
 p_land()
 {
   color_green "$@"
@@ -1449,7 +1454,9 @@ _generate_imports()
         echo "  # import of deployment $i"
         echo "  $l: $(yaml2json <"$2/$i/$GEN_EXP")"
         if [ ${imps["$i"]:-unset} ]; then
-          log title "    imp $i: $(md5sum "$2/$i/$GEN_EXP")"
+          local txt
+          printf -v txt "%-20s %s" "$i:" "${expHashes["$i"]}" 
+          log title "    imp $txt"
           imps["$i"]=X
         fi
       else
@@ -1466,7 +1473,7 @@ _generate_context()
   __modified=
   _generate_imports "$@"
   #confirm "$(cat "$2/$1/$GEN_IMP")"
-  local md5="$(md5sum "$2/$1/$GEN_IMP")"
+  local md5="$(hash "$2/$1/$GEN_IMP")"
   if [ ! -f "$2/$1/$GEN_CTX" -o "$md5" != "${impHashes["$1"]}" ]; then
     __generate_context "$1" "$2/$1"
     impHashes["$1"]="$md5"
@@ -1497,9 +1504,11 @@ _generate_exports()
   local ctx="$2/$1/$GEN_CTX"
   if [ ! -f "$2/$1/$GEN_EXP" -o -n "$__modified" ]; then
     ACTION_create_exports "$1" "$ctx" >"$2/$1/$GEN_EXP"
-    log confirm "    exp: $(md5sum "$2/$1/$GEN_EXP")"
+    local md5="$(hash "$2/$1/$GEN_EXP")"
+    expHashes["$1"]="$md5"
+    log confirm "    exp: generated           $md5"
   else
-    log confirm "    exp: skipped because imports unchanged)"
+    log hint "    exp: kept                ${expHashes["$1"]}"
   fi
 }
 
@@ -1510,7 +1519,7 @@ __generate_exports()
   __generate_context "$@"
   local ctx="$2/$GEN_CTX"
   ACTION_create_exports "$1" "$ctx" >"$2/$GEN_EXP"
-  log confirm "    exp: $(md5sum "$2/$GEN_EXP")"
+  log confirm "    exp:                     $(hash "$2/$GEN_EXP")"
 }
 
 import_closure()
@@ -1638,9 +1647,11 @@ _generate_list()
   for i in ${@:2}; do
     log info "  generate $i"
     if [ -f "$1/$i/$GEN_EXP" ]; then
-      old="$(cat "$1/$i/$GEN_EXP")"
+      #old="$(cat "$1/$i/$GEN_EXP")"
+      old="${expHashes["$i"]}"
       _generate_exports $i "$1"
-      if [ "$old" != "$(cat "$1/$i/$GEN_EXP")" ]; then
+      #if [ "$old" != "$(cat "$1/$i/$GEN_EXP")" ]; then
+      if [ "$old" != "${expHashes["$i"]}" ]; then
         log hint "    $i has changed -> regenerate cycle"
         mod=X
       fi
@@ -1678,6 +1689,7 @@ _handlePublish()
 }
 
 declare -gA impHashes=( )
+declare -gA expHashes=( )
 
 # $1: deployment name
 # $2: tmp dir
@@ -1685,6 +1697,7 @@ declare -gA impHashes=( )
 _generate_closure()
 {
   impHashes=( )
+  expHashes=( )
   imps=( )
   if ! import_closure imps "$1"; then
     list_array __missing dumpargs_err

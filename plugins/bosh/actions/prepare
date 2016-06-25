@@ -402,11 +402,14 @@ add_opt()
   local v="$(jq -r "$2" <<<"$ACCESS_INFO")"
   if [ "$v" != null ]; then
     BOSH_OPTS+=( "$1" "$v" )
+    return
   fi
+  return 1
 }
 
 exec_bosh()
 {
+  info bosh "${BOSH_OPTS[@]}" "$@"
   bosh "${BOSH_OPTS[@]}" "$@"
 }
 
@@ -424,9 +427,9 @@ fi
 
 ACCESS_INFO="$(get_yaml_path "$1" .bosh)"
 if [ "$ACCESS_INFO" != null ]; then
-  add_opt -u .username
-  add_opt -p .password
-  add_opt -t .target_url
+  add_opt -u .local.username   || add_opt -u .username
+  add_opt -p .local.password   || add_opt -p .password
+  add_opt -t .local.target_url || add_opt -t .target_url
 else
   ACCESS_INFO="no bosh info found"
 fi 

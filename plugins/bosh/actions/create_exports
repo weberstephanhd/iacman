@@ -15,15 +15,23 @@ WORK_DIR="${IAC_DEPL_GEN:-$WSROOT}"
 
 GEN_DIR="$CONFIG_DIR/gen"
 
+TMPL="$WSROOT/export-template.yml" 
+if [ ! -f "$TMPL" ]; then
+  TMPL="$WSROOT/export.yml" 
+fi
+if [ ! -f "$TMPL" ]; then
+  TMPL="$WSROOT/helper/export.yml" 
+fi
+
 ACTION_create_exports()
 {
    
-  if [ -f "$WSROOT/helper/export.yml" ]; then
+  if [ -f "$TMPL" ]; then
     if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then
       "$IAC_ACTION_CREATE_MANIFEST" "$@"
     else
       echo "---"
-    fi | spiff merge "$WSROOT/helper/export.yml" - "$1"
+    fi | spiff merge "$TMPL" - "$1"
   else
     if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then
       "$IAC_ACTION_CREATE_MANIFEST" "$@"

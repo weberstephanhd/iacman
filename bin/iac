@@ -495,7 +495,7 @@ listModule()
     declare -A tmplDefs    # template defintions
     declare -A tmplComps   # component for template
     declare -A compDefs    # component defintions
-    scan -p "$p"
+    scan -p "$1"
   )
 }
 
@@ -525,11 +525,6 @@ CMD_show()
       showDeployment "$DNAME" "$DROOT"
     fi
     if [ -z "$CROOT" -a -z "$TROOT" -a -z "$DROOT" -a -n "$MROOT" ]; then
-      if [ -z "$MNAME" ]; then
-        found "landscape root"
-      else
-        found "module $MNAME"
-      fi
       listModule "$MROOT"
     fi
   else
