@@ -1606,6 +1606,7 @@ __closure()
     __missing+=( "$m ${__required[$n]}" )
     debug "$m"
   else
+    debug "--> closure $@ {"
     if [ -z "$2" ]; then
       __stack=( "$1" "${__stack[@]}" )
     fi
@@ -1617,6 +1618,7 @@ __closure()
         __closure "$i"
       fi
     done
+    debug "deps $1 done"
     get_glimpses _imps "$1"
     debug "processing glimpses $1: ${_imps[@]}"
     for i in "${_imps[@]}"; do
@@ -1625,11 +1627,24 @@ __closure()
         __queue+=( "$i" )
       fi
     done
+    debug "glimpses $1 done"
     if [ -z "$2" ]; then
+      debug "adding $1"
       __closure+=( "$1" )
       __stack=( "${__stack[@]:1}" )
     fi
+    debug "<-- closure $@ }"
   fi
+}
+
+cycle()
+{
+  local i
+  local sep
+  for i in "$@"; do
+    echo -n "$sep$i"
+    sep=" <- "
+  done
 }
 
 # $1; relation
@@ -1637,14 +1652,43 @@ __closure()
 # [$3#]: closure
 has_cycle()
 {
-  if contains "${@:2}"; then
+  local __cycle=( )
+  _has_cycle "$@"
+}
+
+# $1; relation
+# $2; name
+# [$3#]: closure
+warn_cycle()
+{
+  local __cycle=( )
+  if _has_cycle "$@"; then
+    warn "cycle in '$1' detected: $(cycle "${__cycle[@]}")"
+  fi
+}
+
+_has_cycle()
+{
+  local i
+  local f
+  __cycle=( "$2" )
+  for i in "${@:3}"; do
+     if [ -z "$f" ]; then
+       __cycle+=( "$i" )
+     fi
+     if [ "$2" == "$i" ]; then
+       f=X
+     fi
+  done
+
+  if [ -n "$f" ]; then
     return 0
   else
     local i
     local imps=( )
     get_$1 imps "$2"
     for i in "${imps[@]}"; do
-      if has_cycle "$1" "$i" "$@"; then
+      if _has_cycle "$1" "$i" "${@:2}"; then
         return 0
       fi
     done
@@ -1756,6 +1800,7 @@ generate_context()
 {
   local publish="${3:-_publish}"
   local imps=( )
+  warn_cycle required "$1"
   _generate_closure "$1" "$2"
   if ! contains "$1" "${imps[@]}"; then
     log info "generating context for $1"

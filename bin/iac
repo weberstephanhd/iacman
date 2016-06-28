@@ -576,9 +576,7 @@ CMD_closure()
   t="$(require_deployment "$n")"
   log info "generating dependency closure for $n"
 
-  if has_cycle required "$n"; then
-    warn "deployment cycle detected"
-  fi
+  warn_cycle required "$n"
   local a=( )
   if ! import_closure a "$n"; then
     list_array __missing dump_err
