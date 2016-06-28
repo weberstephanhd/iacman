@@ -1470,15 +1470,32 @@ _generate_imports()
 # $2: tmp dir
 _generate_context()
 {
+    local l
+    local i
+    local h
+    declare -A labels
+
   __modified=
+
+  get_labels labels "$1"
+  for l in "${!labels[@]}"; do
+    i="${labels["$l"]}"
+    h="$h ${expHashes["$i"]}"
+  done
+  if [ -f "$2/$1/$GEN_CTX" -a "$h" == "${impHashes["$1"]}" ]; then
+    log title "    imp unchanged"
+    return
+  fi
+  impHashes["$1"]="$h"
+
   _generate_imports "$@"
   #confirm "$(cat "$2/$1/$GEN_IMP")"
-  local md5="$(hash "$2/$1/$GEN_IMP")"
-  if [ ! -f "$2/$1/$GEN_CTX" -o "$md5" != "${impHashes["$1"]}" ]; then
+#  local md5="$(hash "$2/$1/$GEN_IMP")"
+#  if [ ! -f "$2/$1/$GEN_CTX" -o "$md5" != "${impHashes["$1"]}" ]; then
     __generate_context "$1" "$2/$1"
-    impHashes["$1"]="$md5"
+#    impHashes["$1"]="$md5"
     __modified=X
-  fi
+#  fi
 }
 
 # $1: deployment name

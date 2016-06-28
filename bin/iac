@@ -718,11 +718,30 @@ exec_action()
   _exec_action "$@"
 }
 
+#
+# $1: action
+# $2: optional: deployment name (or -- to force skip)
+#     used if given name is a deployment otherwise skipped and used as arg
+# $2/3: optional additional arguments for action
 _exec_action()
 {
   local n
   local t
-  n="$(deplname_from_args)"
+ 
+  if [ $# -gt 1 ]; then
+    if [ "$1" != "--" ]; then
+      if [ ${deplDefs["$2"]+set} ]; then
+        n="$2"
+        set "$1" "${@:3}"
+      fi
+    else
+      set "$1" "${@:3}"
+    fi
+  fi
+  if [ -z "$n" ]; then
+    n="$(deplname_from_args)"
+  fi
+
   t="$(require_deployment "$n")"
   local gen="$(get_instance_gen_dir "$n")"
   if [ ${opts[local]+set} ]; then
