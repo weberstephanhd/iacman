@@ -1,4 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+
+set -e
 
 ################################################################################
 # IAC plugin to handle terraform deployments
@@ -10,12 +12,12 @@
 #   stored in the .terraform folder of the component. This folder must be
 #   added to .gitignore.
 # - the plugin provides additional actions for *plan* and general terrform
-#   commands. If required by the sub commands the arguments are automatically 
+#   commands. If required by the sub commands the arguments are automatically
 #   enriched by options required to setup the file locations described above.
 # - the prepare action is propagated to an option script *helper/setup.sh"
 #   there is no standard functionality for the prepare step.
 #   it is intended, for example, to generate certificates and/or keys
-#   required by the terraform files. They should be stored in the 
+#   required by the terraform files. They should be stored in the
 #   config folder.
 # - the exports are extracted from the state file by spiffing the state file
 #   with *helper/export.yml* and *helper/mapping.yml*.
@@ -153,7 +155,7 @@ tf()
 
     show|version) ;;
 
-    graph|init) 
+    graph|init)
       Error command not supported;;
 
     *)
@@ -165,8 +167,8 @@ tf()
     echo terraform "$1" "${args[@]}" "${@:2}" "$dir"
     terraform "$1" "${args[@]}" "${@:2}" "$dir"
   else
-    echo terraform "$1" "${args[@]}" "${@:2}" 
-    terraform "$1" "${args[@]}" "${@:2}" 
+    echo terraform "$1" "${args[@]}" "${@:2}"
+    terraform "$1" "${args[@]}" "${@:2}"
   fi
 }
 
@@ -190,7 +192,5 @@ case "$CMD" in
        tf get
        tf "${@:2}"
      );;
-  
+
 esac
-
-

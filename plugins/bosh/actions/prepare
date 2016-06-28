@@ -1,4 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+
+set -e
 
 WSROOT="${IAC_DEPL_COMP}"
 WSROOT="${WSROOT:-$(iac dir comp)}"
@@ -143,7 +145,7 @@ _handle_stemcells()
       if [ $# -gt 0 ]; then
         "$@"
       fi
-    done < <(jq -r '.resource_pools[].stemcell|select(.name=="'$release'").version'<<<"$descriptor"| sort | uniq | ignore_value null) 
+    done < <(jq -r '.resource_pools[].stemcell|select(.name=="'$release'").version'<<<"$descriptor"| sort | uniq | ignore_value null)
   done < <( jq -r ".resource_pools[].stemcell.name"<<<"$descriptor" | sort | uniq)
   found "actual stemcell version is $version"
   svers="$version"
@@ -432,7 +434,7 @@ if [ "$ACCESS_INFO" != null ]; then
   add_opt -t .local.target_url || add_opt -t .target_url
 else
   ACCESS_INFO="no bosh info found"
-fi 
+fi
 BOSH_OPTS+=( -d "$GEN_DIR/manifest.yml" )
 BOSH_OPTS+=( --no-color )
 
@@ -443,8 +445,8 @@ if [ -z "$IAC_QUIET" ]; then
 fi
 case "$CMD" in
   prepare) prepare_deployment "$GEN_DIR/manifest.yml";;
-  bosh)    
-           case "$2" in 
+  bosh)
+           case "$2" in
              vms)  if [ $# -eq 2 ]; then
                      exec_bosh vms "$NAME"
                    else
@@ -455,4 +457,3 @@ case "$CMD" in
            esac;;
   *)       exec_bosh "$CMD" "${@:2}"
 esac
-

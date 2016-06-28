@@ -1,4 +1,6 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+
+set -e
 
 SCRIPT_BASE="${SCRIPT_BASE:-$(dirname "${BASH_SOURCE[0]}")}"
 
@@ -15,17 +17,17 @@ WORK_DIR="${IAC_DEPL_GEN:-$WSROOT}"
 
 GEN_DIR="$CONFIG_DIR/gen"
 
-TMPL="$WSROOT/export-template.yml" 
+TMPL="$WSROOT/export-template.yml"
 if [ ! -f "$TMPL" ]; then
-  TMPL="$WSROOT/export.yml" 
+  TMPL="$WSROOT/export.yml"
 fi
 if [ ! -f "$TMPL" ]; then
-  TMPL="$WSROOT/helper/export.yml" 
+  TMPL="$WSROOT/helper/export.yml"
 fi
 
 ACTION_create_exports()
 {
-   
+
   if [ -f "$TMPL" ]; then
     if [ -n "$IAC_ACTION_CREATE_MANIFEST" ]; then
       "$IAC_ACTION_CREATE_MANIFEST" "$@"
