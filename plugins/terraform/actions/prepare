@@ -110,7 +110,7 @@ do_deploy()
 
 _export()
 {
-  spiff merge "$COMP_DIR/helper/export.yml" "$COMP_DIR/helper/mapping.yml" "$STATE_DIR/terraform.tfstate"
+  spiff merge "$COMP_DIR/helper/export.yml" "$COMP_DIR/helper/mapping.yml" "$STATE_DIR/terraform.tfstate" "$1"
 }
 
 do_export()
@@ -118,7 +118,7 @@ do_export()
   if [ ! -f "$STATE_DIR/terraform.tfstate" ]; then
     Error "no state file found, please deploy first"
   fi
-  _export
+  _export "$@"
 }
 
 #########################################
